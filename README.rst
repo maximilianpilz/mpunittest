@@ -1,25 +1,30 @@
-****
+**********
 mpunittest
-****
+**********
+
 A Python library/application for running unittests in parallel and merging results.
 
 Installation
 ============
+
 To install the latest release from `PyPI <https://pypi.org/project/mpunittest/>`_,
-simply run:
-::
-  pip install mpunittest
-Or to install the latest development version, run:
-::
-  git clone https://github.com/maximilianpilz/mpunittest
-  python -m pip install .
+simply run::
+
+    pip install mpunittest
+
+Or to install the latest development version, run::
+
+     git clone https://github.com/maximilianpilz/mpunittest
+     python -m pip install .
 
 Quick Start
-==============
+===========
+
 TODO.
 
 Licensing
 =========
+
 Copyright (C) 2023 Maximilian Pilz
 
 This program is free software; you can redistribute it and/or
