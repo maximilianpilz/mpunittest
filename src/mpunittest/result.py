@@ -23,7 +23,7 @@ import traceback
 
 class MergeableResult:  # TODO: check that instances of this are pickleable
     # TODO: consider adding failfast flag
-    class Result(enum.StrEnum):
+    class Result(str, enum.Enum):  # TODO: change to enum.StrEnum in CPython 3.11
         UNKNOWN = 'unknown'
         PASS = 'pass'
         FAIL = 'fail'
