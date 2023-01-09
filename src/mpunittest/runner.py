@@ -126,7 +126,7 @@ class MergingRunner:
                                                top_level_dir=top_level_dir)
         test_id_count = len(test_ids)
 
-        if platform.system().lower() != 'windows':
+        if platform.system() != 'Windows':
             read_selector = selectors.DefaultSelector()
             for respective_parent_conn, child_conn in process_conn_tuples:
                 read_selector.register(respective_parent_conn, selectors.EVENT_READ)
@@ -139,7 +139,7 @@ class MergingRunner:
 
         next_to_send = list()
 
-        if platform.system().lower() != 'windows':
+        if platform.system() != 'Windows':
             write_selectors = dict()
             for respective_parent_conn, child_conn in process_conn_tuples:
                 assert respective_parent_conn.fileno() not in write_selectors
@@ -150,7 +150,7 @@ class MergingRunner:
         test_results = list()
 
         while True:
-            if platform.system().lower() != 'windows':
+            if platform.system() != 'Windows':
                 read_events = read_selector.select(timeout=0.001)
                 for key, mask in read_events:
                     respective_parent_conn = key.fileobj
@@ -174,7 +174,7 @@ class MergingRunner:
                 if not test_ids:
                     break
 
-                if platform.system().lower() != 'windows':
+                if platform.system() != 'Windows':
                     write_events = write_selectors[conn.fileno()].select(timeout=0.0001)
                     for key, mask in write_events:
                         respective_parent_conn = key.fileobj
