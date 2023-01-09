@@ -1,0 +1,61 @@
+#This file is part of mpunittest, a parallel unittest runner.
+#Copyright (C) 2023 Maximilian Pilz
+#
+#This program is free software; you can redistribute it and/or
+#modify it under the terms of the GNU General Public License
+#as published by the Free Software Foundation; version 2.
+#
+#This program is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with this program; if not, write to the Free Software
+#Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpunittest"
+description = "Multi core processing of unittests"
+readme = "README.rst"
+requires-python = ">=3.8"
+license = {text = "GPL-2.0-only"}
+keywords = ["unittest", "unittests", "parallel", "multiprocessing", "process", "processes", "runner"]
+authors = [
+  {email = "maximilian.pilz.git@gmail.com"},
+  {name = "Maximilian Pilz"}
+]
+maintainers = [
+  {name = "Maximilian Pilz", email = "maximilian.pilz.git@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Testing :: Unit",
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+]
+dynamic = ["version"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"mpunittest.html" = ["*.html"]
+
+[tool.setuptools.dynamic]
+version = {attr = "mpunittest.VERSION"}
+readme = {file = ["README.rst"]}
+
+[tool.setuptools]
+license-files = ['COPYING']
+
+[project.urls]
+repository = "https://github.com/maximilianpilz/mpunittest.git"

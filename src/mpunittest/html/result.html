@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<!--
+This file is part of mpunittest, a parallel unittest runner.
+Copyright (C) 2023 Maximilian Pilz
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; version 2.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+-->
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Unittest results</title>
+        <style>
+            .styled-table {
+                border-collapse: collapse;
+                margin: 3em 2em;
+                font-size: 1em;
+                font-family: sans-serif;
+                width: 40em;
+                table-layout:fixed;
+                box-shadow: 0 0 1.5em rgba(0, 0, 0, 0.2);
+            }
+
+            .styled-table thead tr {
+                background-color: #ffffff;
+                color: #000000;
+                text-align: left;
+            }
+
+            .styled-table th,
+            .styled-table td {
+            word-wrap: break-word;
+                padding: 0.8em 1em;
+            }
+
+            .styled-table th,
+            .styled-table tbody tr {
+                border-bottom: 1px solid #000000;
+            }
+
+            .button {
+              border: none;
+              border-radius: 1.2em;
+              color: black;
+              padding: 0.6em 0.1em;
+              text-align: center;
+              text-decoration: none;
+              display: inline-block;
+              font-size: 0.9em;
+              margin: 0.2em 0.1em;
+              cursor: pointer;
+              transition: all 0.5s;
+              width: 6em;
+            }
+
+            .button.fail {
+            background-color: rgba(255, 49, 48, 1);
+            }
+
+            .button.pass {
+            background-color: rgba(52, 199, 89, 1);
+            }
+
+            .button.unknown {
+            background-color: rgba(72, 72, 74, 1);
+            }
+
+            .button.skipped {
+            background-color: rgba(255, 204, 0, 1);
+            }
+
+            .button span {
+              cursor: pointer;
+              display: inline-block;
+              position: relative;
+              transition: 0.5s;
+            }
+
+            .button span:after {
+              content: '\00bb';
+              position: absolute;
+              opacity: 0;
+              top: 0;
+              right: -2em;
+              transition: 0.5s;
+            }
+
+            .button:active span,
+            .button:hover span {
+              padding-right: 1em;
+            }
+
+            .button:active span:after,
+            .button:hover span:after {
+              opacity: 1;
+              right: 0;
+            }
+
+            .button:active {
+            background-color: rgba(142, 142, 147, 0.8);
+              transform: translateY(0.2em);
+            }
+        </style>
+    </head>
+    <body>
+        <table class="styled-table">
+            <thead>
+                <tr>
+                    <th colspan="3">Unittest results</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>name</td>
+                    <td>total time</td>
+                    <td>result</td>
+                </tr>
+                {table_rows}
+            </tbody>
+        </table>
+    </body>
+</html>
