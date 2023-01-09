@@ -21,16 +21,17 @@ import copy
 import multiprocessing
 import os
 import pathlib
+import platform
+import re
 import selectors
 import tempfile
 import time
 import typing
 import unittest
 import uuid
-import re
 
-import mpunittest.result
 import mpunittest.html
+import mpunittest.result
 
 _tr_template = \
     """
@@ -123,10 +124,12 @@ class MergingRunner:
         test_ids = MergingRunner._discover_ids(start_dir=start_dir,
                                                pattern=pattern,
                                                top_level_dir=top_level_dir)
+        test_id_count = len(test_ids)
 
-        read_selector = selectors.DefaultSelector()
-        for respective_parent_conn, child_conn in process_conn_tuples:
-            read_selector.register(respective_parent_conn, selectors.EVENT_READ)
+        if platform.system().lower() != 'windows':
+            read_selector = selectors.DefaultSelector()
+            for respective_parent_conn, child_conn in process_conn_tuples:
+                read_selector.register(respective_parent_conn, selectors.EVENT_READ)
 
         for conn, _ in process_conn_tuples:
             try:
@@ -135,26 +138,34 @@ class MergingRunner:
                 break
 
         next_to_send = list()
-        write_selectors = dict()
 
-        for respective_parent_conn, child_conn in process_conn_tuples:
-            assert respective_parent_conn.fileno() not in write_selectors
-            specific_write_selector = selectors.DefaultSelector()
-            specific_write_selector.register(respective_parent_conn, selectors.EVENT_WRITE)
-            write_selectors[respective_parent_conn.fileno()] = specific_write_selector
+        if platform.system().lower() != 'windows':
+            write_selectors = dict()
+            for respective_parent_conn, child_conn in process_conn_tuples:
+                assert respective_parent_conn.fileno() not in write_selectors
+                specific_write_selector = selectors.DefaultSelector()
+                specific_write_selector.register(respective_parent_conn, selectors.EVENT_WRITE)
+                write_selectors[respective_parent_conn.fileno()] = specific_write_selector
 
         test_results = list()
 
         while True:
-            read_events = read_selector.select(timeout=0.001)
-            for key, mask in read_events:
-                respective_parent_conn = key.fileobj
-                test_results.append(respective_parent_conn.recv())
+            if platform.system().lower() != 'windows':
+                read_events = read_selector.select(timeout=0.001)
+                for key, mask in read_events:
+                    respective_parent_conn = key.fileobj
+                    test_results.append(respective_parent_conn.recv())
 
-                next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
+                    next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
+            else:
+                for respective_parent_conn in multiprocessing.connection.wait([c for c, _ in process_conn_tuples]):
+                    test_results.append(respective_parent_conn.recv())
+
+                    next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
 
             if not test_ids:
-                if len(next_to_send) == len(process_conn_tuples):  # TODO: compare sets of fileno instead
+                # TODO: compare sets of fileno instead
+                if len(next_to_send) == min(test_id_count, len(process_conn_tuples)):
                     break
 
                 continue
@@ -163,14 +174,21 @@ class MergingRunner:
                 if not test_ids:
                     break
 
-                write_events = write_selectors[conn.fileno()].select(timeout=0.0001)
-                for key, mask in write_events:
-                    respective_parent_conn = key.fileobj
+                if platform.system().lower() != 'windows':
+                    write_events = write_selectors[conn.fileno()].select(timeout=0.0001)
+                    for key, mask in write_events:
+                        respective_parent_conn = key.fileobj
 
+                        try:
+                            respective_parent_conn.send(test_ids.pop())
+                        except IndexError:
+                            break
+                        next_to_send.remove(conn)
+                else:
                     try:
-                        respective_parent_conn.send(test_ids.pop())
+                        conn.send(test_ids.pop())
                     except IndexError:
-                        break
+                        continue
                     next_to_send.remove(conn)
 
         # cleanup starts here
