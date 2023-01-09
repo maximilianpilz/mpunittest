@@ -18,6 +18,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 import enum
 import sys
+import time
 import traceback
 
 
@@ -33,6 +34,7 @@ class MergeableResult:  # TODO: check that instances of this are pickleable
         self.test_id_to_result_mapping = dict()  # TODO: sync with startTestRun
         self.last_error_mapping = dict()  # TODO: sync with startTestRun
         self.skip_reason_mapping = dict()  # TODO: sync with startTestRun
+        self.time_spent_per_test_id = dict()  # TODO: sync with startTestRun
 
         self.log_file = log_file_name
 
@@ -41,14 +43,16 @@ class MergeableResult:  # TODO: check that instances of this are pickleable
 
     def startTest(self, test):
         self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.UNKNOWN
+        self.time_spent_per_test_id[test.id()] = -time.monotonic_ns()
 
     def startTestRun(self):
         self.test_id_to_result_mapping = dict()
         self.last_error_mapping = dict()
         self.skip_reason_mapping = dict()
+        self.time_spent_per_test_id = dict()
 
     def stopTest(self, test):
-        pass
+        self.time_spent_per_test_id[test.id()] += time.monotonic_ns()
 
     def stopTestRun(self):
         pass

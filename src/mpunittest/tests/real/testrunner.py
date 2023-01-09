@@ -81,9 +81,11 @@ class TestRunner(unittest.TestCase):
 if __name__ == '__main__':
     import mpunittest.tests.dummy.dirs
 
-    r = mpunittest.runner.MergingRunner().discover_and_run(
+    r = mpunittest.runner.MergingRunner(process_count=7).discover_and_run(
         start_dir=pathlib.Path(mpunittest.tests.dummy.dirs.__file__).parent.resolve(),
-        pattern="*test.py"
+        pattern="*test.py",
+        doc_title='test1',
+        html_file_name='test2'
     )
 
     print(r)

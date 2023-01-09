@@ -93,7 +93,10 @@ class MergingRunner:
                          start_dir,
                          pattern='test*.py',
                          top_level_dir=None,
-                         result_path: pathlib.Path = None):
+                         result_path: pathlib.Path = None,
+                         doc_title: str = 'Unittest results',
+                         html_file_name: str = 'test_result'):
+        start = time.monotonic_ns()
 
         if result_path is None:
             result_path = pathlib.Path(f'testruns') / pathlib.Path(f'testrun{uuid.uuid4().hex}')
@@ -203,13 +206,22 @@ class MergingRunner:
             if child_process.is_alive():
                 raise RuntimeError  # TODO: add message
 
-        self._generate_html(test_results=test_results, result_path=result_path)
+        end = time.monotonic_ns()
+        total_time_spent_ns = end - start
+        self._generate_html(test_results=test_results,
+                            result_path=result_path,
+                            total_time_spent_ns=total_time_spent_ns,
+                            doc_title=doc_title,
+                            html_file_name=html_file_name)
 
         return test_results
 
     @staticmethod
     def _generate_html(test_results: typing.List[mpunittest.result.MergeableResult],
-                       result_path: pathlib.Path):
+                       result_path: pathlib.Path,
+                       total_time_spent_ns: int,
+                       doc_title: str,
+                       html_file_name: str):
         with open(
             pathlib.Path(mpunittest.html.__file__).parent.joinpath('result.html'), 'r'
         ) as html_template:
@@ -228,14 +240,18 @@ class MergingRunner:
             for test_id, extra_class in test_result.test_id_to_result_mapping.items():
                 table_data += _tr_template.format(
                     test_id=test_id,
-                    duration='no measurement',
+                    duration=f'{test_result.time_spent_per_test_id[test_id]}ns',
                     log_file=test_result.log_file.name,
                     extra_class=extra_class,
                     text=extra_class.upper()
                 )
 
-        with open(result_path.joinpath('test_result.html'), 'w') as final_html_file:
-            final_html_file.write(template_data.replace('{table_rows}', table_data))
+        with open(result_path.joinpath(f'{html_file_name}.html'), 'w') as final_html_file:
+            final_html_data = template_data.replace('{table_rows}', table_data)
+            final_html_data = final_html_data.replace('{time}', f'{total_time_spent_ns}ns')
+            final_html_data = final_html_data.replace('{title}', doc_title)
+
+            final_html_file.write(final_html_data)
 
     @staticmethod
     def process_target(child_conn, start_dir, pattern, top_level_dir, result_class, result_path):
