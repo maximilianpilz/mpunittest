@@ -6,5 +6,6 @@ TODOs
 *.whl
 venv/
 build/
+dist/
 mpunittest-*
 testruns/
