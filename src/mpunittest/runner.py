@@ -51,6 +51,7 @@ class MergingRunner:
     def __init__(self,
                  process_count: int = 2,
                  mp_context: multiprocessing.context.BaseContext = None,
+                 daemons: bool = True,
                  result_class=mpunittest.result.MergeableResult):
         self._process_count = process_count
 
@@ -60,6 +61,7 @@ class MergingRunner:
             self._mp_context: multiprocessing.context.BaseContext = mp_context
 
         self._result_class = result_class
+        self._daemons = daemons
 
     @staticmethod
     def flatten(test_obj: typing.Union[unittest.TestSuite, unittest.TestCase]):
@@ -111,7 +113,7 @@ class MergingRunner:
         for _ in range(self._process_count):
             respective_parent_conn, child_conn = self._mp_context.Pipe(duplex=True)
 
-            child_process = self._mp_context.Process(daemon=True,
+            child_process = self._mp_context.Process(daemon=self._daemons,
                                                      target=self.process_target,
                                                      args=(child_conn,
                                                            start_dir,
@@ -161,7 +163,8 @@ class MergingRunner:
 
                     next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
             else:
-                for respective_parent_conn in multiprocessing.connection.wait([c for c, _ in process_conn_tuples]):
+                for respective_parent_conn in multiprocessing.connection.wait(
+                        [c for c, _ in process_conn_tuples], timeout=0.001):
                     test_results.append(respective_parent_conn.recv())
 
                     next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
