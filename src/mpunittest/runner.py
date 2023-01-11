@@ -15,8 +15,6 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
-
-import contextlib
 import copy
 import multiprocessing
 import os
@@ -32,6 +30,7 @@ import uuid
 
 import mpunittest.html
 import mpunittest.result
+import mpunittest.streamctx
 
 _tr_template = \
     """
@@ -284,33 +283,28 @@ class MergingRunner:
                 final_stdout_filename = temp_path.joinpath(stdout_filename)
 
                 with \
-                        open(final_stderr_filename, 'w') as stderr_file, \
-                        open(final_stdout_filename, 'w') as stdout_file, \
-                        contextlib.redirect_stderr(new_target=stderr_file), \
-                        contextlib.redirect_stdout(new_target=stdout_file):
+                        mpunittest.streamctx.duplicate_stderr_to_file(final_stderr_filename),\
+                        mpunittest.streamctx.duplicate_stdout_to_file(final_stdout_filename):
                     # execute test here
                     id_to_test_mapping[test_id](result)
 
-                    stderr_file.flush()
-                    stdout_file.flush()
-
                 with \
-                        open(log_file_name, 'w') as merged, \
-                        open(final_stderr_filename, 'r') as stderr_file, \
-                        open(final_stdout_filename, 'r') as stdout_file:
+                        open(log_file_name, 'wb') as merged, \
+                        open(final_stderr_filename, 'rb') as stderr_file, \
+                        open(final_stdout_filename, 'rb') as stdout_file:
                     if len(result.test_id_to_result_mapping) == 1:
                         id_to_write = list(result.test_id_to_result_mapping.keys())[0]
-                        merged.write(f'Log for test with id {id_to_write} run at {time_str}: \n\n')
+                        merged.write(f'Log for test with id {id_to_write} run at {time_str}: \n\n'.encode('utf8'))
                     else:
                         ids_to_write = set(result.test_id_to_result_mapping.keys())
-                        merged.write(f'Log for tests with ids {ids_to_write} run at {time_str}: \n\n')
-                    merged.write('#' * 10 + ' ' * 2 + 'stderr' + ' ' * 2 + '#' * 10 + '\n\n')
+                        merged.write(f'Log for tests with ids {ids_to_write} run at {time_str}: \n\n'.encode('utf8'))
+                    merged.write(('#' * 10 + ' ' * 2 + 'stderr' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
                     MergingRunner.copy_content_with_limited_buffer(stderr_file, merged)
-                    merged.write('\n' + '#' * 30 + '\n\n')
-                    merged.write('#' * 10 + ' ' * 2 + 'stdout' + ' ' * 2 + '#' * 10 + '\n\n')
+                    merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
+                    merged.write(('#' * 10 + ' ' * 2 + 'stdout' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
                     MergingRunner.copy_content_with_limited_buffer(stdout_file, merged)
-                    merged.write('\n' + '#' * 30 + '\n\n')
-                    merged.write(f'Overall result: {result.overall_result()}\n')
+                    merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
+                    merged.write(f'Overall result: {result.overall_result()}\n'.encode('utf8'))
 
             child_conn.send(result)
 
