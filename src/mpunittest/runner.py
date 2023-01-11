@@ -204,9 +204,7 @@ class MergingRunner:
             respective_parent_conn.close()
 
         for child_process in child_processes:
-            child_process.join(timeout=1)
-            if child_process.is_alive():
-                raise RuntimeError  # TODO: add message
+            child_process.join()
 
         end = time.monotonic_ns()
         total_time_spent_ns = end - start
@@ -283,8 +281,8 @@ class MergingRunner:
                 final_stdout_filename = temp_path.joinpath(stdout_filename)
 
                 with \
-                        mpunittest.streamctx.duplicate_stderr_to_file(final_stderr_filename),\
-                        mpunittest.streamctx.duplicate_stdout_to_file(final_stdout_filename):
+                        mpunittest.streamctx.redirect_stderr_to_file(final_stderr_filename),\
+                        mpunittest.streamctx.redirect_stdout_to_file(final_stdout_filename):
                     # execute test here
                     id_to_test_mapping[test_id](result)
 
