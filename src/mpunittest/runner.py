@@ -15,8 +15,11 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
+import collections
+import contextlib
 import copy
 import multiprocessing
+import multiprocessing.connection
 import os
 import pathlib
 import platform
@@ -32,6 +35,7 @@ import mpunittest.html
 import mpunittest.result
 import mpunittest.streamctx
 
+
 _tr_template = \
     """
 <tr>
@@ -42,6 +46,8 @@ _tr_template = \
     </td>
 </tr>
     """
+
+HtmlResultAssets = collections.namedtuple('HtmlResultAssets', ('document_title', 'document_file_name', 'result_path'))
 
 
 class MergingRunner:
@@ -87,21 +93,38 @@ class MergingRunner:
 
         return {test.id(): test for test in test_generator}
 
-    def run(self, test):
-        raise NotImplementedError
-
-    def discover_and_run(self,
-                         start_dir,
-                         pattern='test*.py',
-                         top_level_dir=None,
-                         result_path: pathlib.Path = None,
-                         doc_title: str = 'Unittest results',
-                         html_file_name: str = 'test_result'):
+    def discover_and_run(
+            self,
+            start_dir: pathlib.Path,
+            pattern: str = 'test*.py',
+            top_level_dir: str = None,
+            html_result_assets: HtmlResultAssets = None,
+            # doc_title: str = 'Unittest results',
+            # html_file_name: str = 'test_result',
+            # result_path: pathlib.Path = None
+    ) -> typing.List[mpunittest.result.MergeableResult]:
         start = time.monotonic_ns()
 
-        if result_path is None:
-            result_path = pathlib.Path(f'testruns') / pathlib.Path(f'testrun{uuid.uuid4().hex}')
-        result_path.mkdir(parents=True, exist_ok=True)
+        if html_result_assets:
+            if html_result_assets.result_path:
+                result_path = html_result_assets.result_path
+            else:
+                result_path = pathlib.Path(f'testruns') / pathlib.Path(f'testrun{uuid.uuid4().hex}')
+            result_path.mkdir(parents=True, exist_ok=True)
+
+            if html_result_assets.document_title:
+                doc_title = html_result_assets.document_title
+            else:
+                doc_title = 'Unittest results'
+
+            if html_result_assets.document_file_name:
+                html_file_name = html_result_assets.document_file_name
+            else:
+                html_file_name = 'test_result'
+        else:
+            result_path = None
+            doc_title = None
+            html_file_name = None
 
         child_processes = list()
         process_conn_tuples: typing.List[typing.Tuple[
@@ -208,11 +231,13 @@ class MergingRunner:
 
         end = time.monotonic_ns()
         total_time_spent_ns = end - start
-        self._generate_html(test_results=test_results,
-                            result_path=result_path,
-                            total_time_spent_ns=total_time_spent_ns,
-                            doc_title=doc_title,
-                            html_file_name=html_file_name)
+
+        if html_result_assets:
+            self._generate_html(test_results=test_results,
+                                result_path=result_path,
+                                total_time_spent_ns=total_time_spent_ns,
+                                doc_title=doc_title,
+                                html_file_name=html_file_name)
 
         return test_results
 
@@ -223,7 +248,7 @@ class MergingRunner:
                        doc_title: str,
                        html_file_name: str):
         with open(
-            pathlib.Path(mpunittest.html.__file__).parent.joinpath('result.html'), 'r'
+                pathlib.Path(mpunittest.html.__file__).parent.joinpath('result.html'), 'r'
         ) as html_template:
             template_data = html_template.read()
 
@@ -254,65 +279,108 @@ class MergingRunner:
             final_html_file.write(final_html_data)
 
     @staticmethod
-    def process_target(child_conn, start_dir, pattern, top_level_dir, result_class, result_path):
+    def process_target(
+            child_conn: multiprocessing.connection.Connection,
+            start_dir: pathlib.Path,
+            pattern: str,
+            top_level_dir: str,
+            result_class: typing.Type[mpunittest.result.MergeableResult],
+            result_path: pathlib.Path
+    ):
+        try:
+            id_to_test_mapping = MergingRunner._discover_id_to_test_mapping(start_dir, pattern, top_level_dir)
 
-        id_to_test_mapping = MergingRunner._discover_id_to_test_mapping(start_dir, pattern, top_level_dir)
+            time_str = str(time.time()).replace('.', '_')  # TODO: consider using the time for the dir instead of file names
+            filename_postfix = f'pid{os.getpid()}_t{time_str}'
+            stderr_filename = 'stderr' + filename_postfix
+            stdout_filename = 'stdout' + filename_postfix
 
-        time_str = str(time.time()).replace('.', '_')  # TODO: consider using the time for the dir instead of file names
-        filename_postfix = f'pid{os.getpid()}_t{time_str}'
-        stderr_filename = 'stderr' + filename_postfix
-        stdout_filename = 'stdout' + filename_postfix
+            while True:
+                # TODO:
+                #  consider doing read above and directly passing
+                #  it into a function that evaluates the test case
 
-        while True:
-            # TODO:
-            #  consider doing read above and directly passing
-            #  it into a function that evaluates the test case
+                test_id = child_conn.recv()
+                if test_id == -1:
+                    break
 
-            test_id = child_conn.recv()
-            if test_id == -1:
-                break
+                if result_path:
+                    log_file_name = result_path.joinpath('test' + uuid.uuid4().hex + '.log')
 
-            log_file_name = result_path.joinpath('test' + uuid.uuid4().hex + '.log')
-            result = result_class(log_file_name=log_file_name)
+                    temp_dir_ctx = tempfile.TemporaryDirectory
+                    stderr_redirect_ctx = mpunittest.streamctx.redirect_stderr_to_file
+                    stdout_redirect_ctx = mpunittest.streamctx.redirect_stdout_to_file
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = pathlib.Path(temp_dir).resolve()
-                final_stderr_filename = temp_path.joinpath(stderr_filename)
-                final_stdout_filename = temp_path.joinpath(stdout_filename)
+                else:
+                    log_file_name = None
 
-                with \
-                        mpunittest.streamctx.redirect_stderr_to_file(final_stderr_filename),\
-                        mpunittest.streamctx.redirect_stdout_to_file(final_stdout_filename):
-                    # execute test here
-                    id_to_test_mapping[test_id](result)
+                    temp_dir_ctx = MergingRunner.dummy_context
+                    stderr_redirect_ctx = MergingRunner.dummy_context
+                    stdout_redirect_ctx = MergingRunner.dummy_context
 
-                with \
-                        open(log_file_name, 'wb') as merged, \
-                        open(final_stderr_filename, 'rb') as stderr_file, \
-                        open(final_stdout_filename, 'rb') as stdout_file:
-                    if len(result.test_id_to_result_mapping) == 1:
-                        id_to_write = list(result.test_id_to_result_mapping.keys())[0]
-                        merged.write(f'Log for test with id {id_to_write} run at {time_str}: \n\n'.encode('utf8'))
+                result = result_class(log_file_path=log_file_name)
+
+                with temp_dir_ctx() as temp_dir:
+
+                    if temp_dir:
+                        temp_path = pathlib.Path(temp_dir).resolve()
+                        final_stderr_filename = temp_path.joinpath(stderr_filename)
+                        final_stdout_filename = temp_path.joinpath(stdout_filename)
                     else:
-                        ids_to_write = set(result.test_id_to_result_mapping.keys())
-                        merged.write(f'Log for tests with ids {ids_to_write} run at {time_str}: \n\n'.encode('utf8'))
-                    merged.write(('#' * 10 + ' ' * 2 + 'stderr' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
-                    MergingRunner.copy_content_with_limited_buffer(stderr_file, merged)
-                    merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
-                    merged.write(('#' * 10 + ' ' * 2 + 'stdout' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
-                    MergingRunner.copy_content_with_limited_buffer(stdout_file, merged)
-                    merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
-                    merged.write(f'Overall result: {result.overall_result()}\n'.encode('utf8'))
+                        final_stderr_filename = None
+                        final_stdout_filename = None
 
-            child_conn.send(result)
+                    with \
+                            stderr_redirect_ctx(final_stderr_filename), \
+                            stdout_redirect_ctx(final_stdout_filename):
+                        # execute test here
+                        id_to_test_mapping[test_id](result)
 
-        child_conn.send(-2)
+                    if log_file_name:
+                        with \
+                                open(log_file_name, 'wb') as merged, \
+                                open(final_stderr_filename, 'rb') as stderr_file, \
+                                open(final_stdout_filename, 'rb') as stdout_file:
+                            if len(result.test_id_to_result_mapping) == 1:
+                                id_to_write = list(result.test_id_to_result_mapping.keys())[0]
+                                merged.write(f'Log for test with id {id_to_write} run at {time_str}: \n\n'.encode('utf8'))
+                            else:
+                                ids_to_write = set(result.test_id_to_result_mapping.keys())
+                                merged.write(f'Log for tests with ids {ids_to_write} run at {time_str}: \n\n'.encode('utf8'))
+                            merged.write(('#' * 10 + ' ' * 2 + 'stderr' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
+                            MergingRunner.copy_content_with_limited_buffer(stderr_file, merged)
+                            merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
+                            merged.write(('#' * 10 + ' ' * 2 + 'stdout' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
+                            MergingRunner.copy_content_with_limited_buffer(stdout_file, merged)
+                            merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
+                            merged.write(f'Overall result: {result.overall_result()}\n'.encode('utf8'))
+
+                child_conn.send(result)
+
+            child_conn.send(-2)
+        finally:
+            child_conn.close()
 
     @staticmethod
-    def copy_content_with_limited_buffer(src, dst, buffer_size=1000):
-
+    def copy_content_with_limited_buffer(
+            src: typing.IO,
+            dst: typing.IO,
+            buffer_size: int = 1000
+    ):
         while True:
             data = src.read(buffer_size)
             if not data:
                 break
             dst.write(data)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def dummy_context(*_, **__) -> typing.Generator:
+        """
+        Do not do anything additionally to the code in the context.
+        This is supposed to be a syntactical replacement for other contexts in case that the other contexts shall not
+        be used.
+
+        :return: generator that can be converted into context manager that does effectively nothing
+        """
+        yield

@@ -30,7 +30,7 @@ def redirect_stderr_to_file(file: pathlib.Path) -> typing.Generator:
     :param file: target of redirection
     :return: a generator, which can converted to a respective contextmanager
     """
-    assert file.is_file()
+    assert file.is_file() or not file.exists()
 
     with open(file, 'w') as f:
         with redirect_fd(f.fileno(), sys.stderr.fileno()):
@@ -48,7 +48,7 @@ def redirect_stdout_to_file(file: pathlib.Path) -> typing.Generator:
     :param file: target of redirection
     :return: a generator, which can converted to a respective contextmanager
     """
-    assert file.is_file()
+    assert file.is_file() or not file.exists()
 
     with open(file, 'w') as f:
         with redirect_fd(f.fileno(), sys.stdout.fileno()):

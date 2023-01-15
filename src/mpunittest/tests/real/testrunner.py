@@ -57,7 +57,11 @@ class TestRunner(unittest.TestCase):
             results = mpunittest.runner.MergingRunner().discover_and_run(
                 start_dir=pathlib.Path(mpunittest.tests.dummy.dirs.__file__).parent.resolve(),
                 pattern="*test.py",
-                result_path=temp_path
+                html_result_assets=mpunittest.runner.HtmlResultAssets(
+                    document_title=None,  # this will cause usage of the default title
+                    document_file_name=None,  # this will cause usage of the default file name
+                    result_path=temp_path
+                )
             )
 
             result_mapping = dict()
@@ -84,8 +88,11 @@ if __name__ == '__main__':
     r = mpunittest.runner.MergingRunner(process_count=7).discover_and_run(
         start_dir=pathlib.Path(mpunittest.tests.dummy.dirs.__file__).parent.resolve(),
         pattern="*test.py",
-        doc_title='test1',
-        html_file_name='test2'
+        html_result_assets=mpunittest.runner.HtmlResultAssets(
+            document_title='test1',
+            document_file_name='test2',
+            result_path=None  # this will cause usage of the default dir
+        )
     )
 
     print(r)
