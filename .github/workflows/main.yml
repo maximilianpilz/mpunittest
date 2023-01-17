@@ -25,6 +25,9 @@ jobs:
   hatch-build:
     timeout-minutes: 5
     runs-on: ubuntu-latest
+    outputs:
+      output1: ${{ steps.filenames.outputs.whl }}
+      output2: ${{ steps.filenames.outputs.targz }}
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
@@ -46,6 +49,12 @@ jobs:
       - name: twine check
         run: python -m twine check dist/*
 
+      - name: set filenames in output
+        id: filenames
+        run: |
+          echo "whl=$(echo dist/*.whl)" >> $GITHUB_OUTPUT
+          echo "targz=$(echo dist/*.tar.gz)" >> $GITHUB_OUTPUT
+
       - name: archive distributions
         uses: actions/upload-artifact@v3
         with:
@@ -59,7 +68,7 @@ jobs:
       matrix:
         python_version: [ '3.8', '3.9', '3.10', '3.11' ]
         os: [ macos-latest, ubuntu-latest, windows-latest ]
-        distribution: [ .whl, .tar.gz ]
+        distribution: [ ${{ needs.hatch-build.outputs.output1 }}, ${{ needs.hatch-build.outputs.output2 }} ]
     runs-on: ${{ matrix.os }}
     needs: hatch-build
     steps:
@@ -68,7 +77,7 @@ jobs:
         with:
           python-version: ${{ matrix.python_version }}
 
-      - name: download wheel
+      - name: download distributions
         uses: actions/download-artifact@v3
         with:
           name: distributions
