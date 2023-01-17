@@ -64,13 +64,13 @@ jobs:
 
   test-distributions:
     timeout-minutes: 10
+    needs: hatch-build
     strategy:
       matrix:
         python_version: [ '3.8', '3.9', '3.10', '3.11' ]
         os: [ macos-latest, ubuntu-latest, windows-latest ]
         distribution: [ ${{ needs.hatch-build.outputs.output1 }}, ${{ needs.hatch-build.outputs.output2 }} ]
     runs-on: ${{ matrix.os }}
-    needs: hatch-build
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
