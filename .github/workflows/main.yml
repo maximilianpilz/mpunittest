@@ -85,7 +85,7 @@ jobs:
           path: dist
 
       - name: install package
-        run: python -m pip install dist/mpunittest*${{ matrix.distribution }}
+        run: python -m pip install ${{ matrix.distribution }}
 
       - name: run unit tests
         run: python -m mpunittest.tests.real.testrunner
