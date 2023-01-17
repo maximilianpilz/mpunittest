@@ -2,7 +2,10 @@
 mpunittest
 **********
 
-A Python library/application for running unittests in parallel and merging results.
+.. image:: https://github.com/maximilianpilz/mpunittest/actions/workflows/main.yml/badge.svg?branch=main
+    :align: center
+
+| A Python library/application for running unittests in parallel and merging results.
 
 Installation
 ============
