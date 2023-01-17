@@ -83,16 +83,4 @@ class TestRunner(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    import mpunittest.tests.dummy.dirs
-
-    r = mpunittest.runner.MergingRunner(process_count=7).discover_and_run(
-        start_dir=pathlib.Path(mpunittest.tests.dummy.dirs.__file__).parent.resolve(),
-        pattern="*test.py",
-        html_result_assets=mpunittest.runner.HtmlResultAssets(
-            document_title='test1',
-            document_file_name='test2',
-            result_path=None  # this will cause usage of the default dir
-        )
-    )
-
-    print(r)
+    unittest.main()

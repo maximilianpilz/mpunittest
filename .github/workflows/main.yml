@@ -1,0 +1,80 @@
+#This file is part of mpunittest, a parallel unittest runner.
+#Copyright (C) 2023 Maximilian Pilz
+#
+#This program is free software; you can redistribute it and/or
+#modify it under the terms of the GNU General Public License
+#as published by the Free Software Foundation; version 2.
+#
+#This program is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with this program; if not, write to the Free Software
+#Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+name: main
+
+on:
+  push:
+    branches:
+      - 'main'
+
+jobs:
+  hatch-build:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: upgrade pip
+        run: python -m pip install --no-cache-dir --upgrade pip
+
+      - name: install Hatch
+        run: python -m pip install --no-cache-dir hatch twine
+
+      - name: pip check
+        run: python -m pip check
+
+      - name: hatch build
+        run: python -m hatch build
+
+      - name: twine check
+        run: python -m twine check dist/*
+
+      - name: archive distributions
+        uses: actions/upload-artifact@v3
+        with:
+          name: distributions
+          path: dist
+          retention-days: 5
+
+  test-distributions:
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        python_version: [ 3.8, 3.9, 3.10, 3.11 ]
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+        distribution: [ .whl, .tar.gz ]
+    runs-on: ${{ matrix.os }}
+    needs: hatch-build
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: download wheel
+        uses: actions/download-artifact@v3
+        with:
+          name: distributions
+
+      - name: install package
+        run: python -m pip install dist/mpunittest*.${{ matrix.distribution }}
+
+      - name: run unit tests
+        run: python -m mpunittest.tests.real.testrunner
