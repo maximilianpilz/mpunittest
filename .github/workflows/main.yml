@@ -72,6 +72,7 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: distributions
+          path: dist
 
       - name: install package
         run: python -m pip install dist/mpunittest*${{ matrix.distribution }}
