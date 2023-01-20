@@ -4,16 +4,22 @@ mpunittest
 
 .. image:: https://img.shields.io/pypi/pyversions/mpunittest
    :alt: pypi python version(s)
+
 .. image:: https://img.shields.io/pypi/implementation/mpunittest
    :alt: pypi implementation
+
 .. image:: https://img.shields.io/pypi/status/mpunittest
    :alt: pypi development status
+
 .. image:: https://img.shields.io/pypi/v/mpunittest
    :alt: pypi latest version
+
 .. image:: https://img.shields.io/pypi/dm/mpunittest
    :alt: pypi downloads per month
+
 .. image:: https://img.shields.io/badge/tested%20on-macos%20%7C%20ubuntu%20%7C%20windows-blue
    :alt: tested on which operating systems
+
 
 | A Python library/application for running unittests in parallel and merging results.
 
