@@ -28,7 +28,7 @@ def redirect_stderr_to_file(file: pathlib.Path) -> typing.Generator:
     Redirect sys.stderr to the given file.
 
     :param file: target of redirection
-    :return: a generator, which can converted to a respective contextmanager
+    :return: a generator, which can be converted to a respective contextmanager
     """
     assert file.is_file() or not file.exists()
 
@@ -46,7 +46,7 @@ def redirect_stdout_to_file(file: pathlib.Path) -> typing.Generator:
     Redirect sys.stdout to the given file.
 
     :param file: target of redirection
-    :return: a generator, which can converted to a respective contextmanager
+    :return: a generator, which can be converted to a respective contextmanager
     """
     assert file.is_file() or not file.exists()
 
@@ -72,7 +72,7 @@ def redirect_fd(dst_fd: int, src_fd: int) -> typing.Generator:
 
     :param dst_fd: file descriptor that refers to the file description to be used for adjusting src_fd
     :param src_fd: file descriptor to be adjusted
-    :return: a generator, which can converted to a respective contextmanager
+    :return: a generator, which can be converted to a respective contextmanager
     """
     old_src_fd: int = os.dup(src_fd)  # backup
 

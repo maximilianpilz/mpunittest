@@ -16,14 +16,26 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 
+import logging
 import pathlib
 
+import mpunittest.logging
 import mpunittest.runner
+import mpunittest.tests.dummy.dirs
 
 if __name__ == '__main__':
-    import mpunittest.tests.dummy.dirs
 
-    r = mpunittest.runner.MergingRunner(process_count=7).discover_and_run(
+    handler = logging.StreamHandler()
+
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+    handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
+    mpunittest.logging.logger.addHandler(handler)
+
+    merging_runner = mpunittest.runner.MergingRunner(process_count=7)
+
+    result = merging_runner.discover_and_run(
         start_dir=pathlib.Path(mpunittest.tests.dummy.dirs.__file__).parent.resolve(),
         pattern="*test.py",
         html_result_assets=mpunittest.runner.HtmlResultAssets(
@@ -33,4 +45,5 @@ if __name__ == '__main__':
         )
     )
 
-    print(r)
+    mpunittest.logging.logger.getChild('tests.real.manual').info(
+        'run finished with return value %s', result)

@@ -41,6 +41,12 @@ class MergeableResult:
 
         self.log_file: pathlib.Path = log_file_path
 
+    def __str__(self):
+        return 'Overall result: ' + self.overall_result()
+
+    def __repr__(self):
+        return str(self.__class__.__name__) + ': ' + self.overall_result()
+
     def printErrors(self) -> None:
         pass
 
@@ -124,8 +130,9 @@ class MergeableResult:
     ) -> None:
         self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.FAIL
 
-    def wasSuccessful(self) -> None:
-        pass  # TODO: implement while considering expected failures
+    def wasSuccessful(self) -> bool:
+        # TODO: implement while considering expected failures
+        return self.overall_result() == self.Result.PASS
 
     def stop(self) -> None:
         pass

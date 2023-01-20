@@ -2,8 +2,18 @@
 mpunittest
 **********
 
-.. image:: https://github.com/maximilianpilz/mpunittest/actions/workflows/main.yml/badge.svg?branch=main
-    :align: center
+.. image:: https://img.shields.io/pypi/pyversions/mpunittest
+   :alt: pypi python version(s)
+.. image:: https://img.shields.io/pypi/implementation/mpunittest
+   :alt: pypi implementation
+.. image:: https://img.shields.io/pypi/status/mpunittest
+   :alt: pypi development status
+.. image:: https://img.shields.io/pypi/v/mpunittest
+   :alt: pypi latest version
+.. image:: https://img.shields.io/pypi/dm/mpunittest
+   :alt: pypi downloads per month
+.. image:: https://img.shields.io/badge/tested%20on-macos%20%7C%20ubuntu%20%7C%20windows-blue
+   :alt: tested on which operating systems
 
 | A Python library/application for running unittests in parallel and merging results.
 
@@ -23,7 +33,50 @@ Or to install the latest development version, run::
 Quick Start
 ===========
 
-TODO.
+An example for running with 10 workers and generating an html file containing the results::
+
+    merging_runner = mpunittest.runner.MergingRunner(process_count=10)
+
+    merging_runner.discover_and_run(
+        start_dir=pathlib.Path('path_to_search_in').resolve(),
+        pattern="*.py",
+        html_result_assets=mpunittest.runner.HtmlResultAssets(
+            document_title='title of the html',
+            document_file_name='name_of_the_html_file',
+            result_path='unittest_results'
+        )
+    )
+
+An example for running with 10 workers and without any files being generated::
+
+    merging_runner = mpunittest.runner.MergingRunner(process_count=10)
+
+    result = merging_runner.discover_and_run(
+        start_dir=pathlib.Path('path_to_search_in').resolve(),
+        pattern="*.py"
+    )
+
+    print(result)
+
+An example for turning on logging::
+
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
+    mpunittest.logging.logger.addHandler(handler)
+
+    # run tests here
+
+    mpunittest.logging.logger.getChild('your.script').info('result: %s', result)
+
+An example for running without writing additional python code::
+
+    python -m mpunittest.run /Users/yourname/dev/python_projects/yourproject/src/tests -p "test*.py" -da -c 4
+
+To see the help for running without writing additional python code::
+
+    python -m mpunittest.run --help
 
 Licensing
 =========

@@ -32,9 +32,9 @@ import unittest
 import uuid
 
 import mpunittest.html
+import mpunittest.logging
 import mpunittest.result
 import mpunittest.streamctx
-
 
 _tr_template = \
     """
@@ -51,6 +51,11 @@ HtmlResultAssets = collections.namedtuple('HtmlResultAssets', ('document_title',
 
 
 class MergingRunner:
+    """
+    An unittest runner for parallel unittest execution that (optionally) can merge results into a file.
+    """
+    _logger = mpunittest.logging.logger.getChild('runner')
+
     _regex = re.compile('(?s)<!--.*-->\n')
 
     def __init__(self,
@@ -58,6 +63,12 @@ class MergingRunner:
                  mp_context: multiprocessing.context.BaseContext = None,
                  daemons: bool = True,
                  result_class=mpunittest.result.MergeableResult):
+        """
+        :param process_count: amount of process to start for delegating unittest execution to them
+        :param mp_context: multiprocessing context to use for starting the processes e.g. the 'spawn' context
+        :param daemons: will be used as daemon flag for process creation
+        :param result_class: type to instantiate for saving unittest results
+        """
         self._process_count = process_count
 
         if mp_context is None:
@@ -69,7 +80,13 @@ class MergingRunner:
         self._daemons = daemons
 
     @staticmethod
-    def flatten(test_obj: typing.Union[unittest.TestSuite, unittest.TestCase]):
+    def flatten(test_obj: typing.Union[unittest.TestSuite, unittest.TestCase]) -> typing.Generator:
+        """
+        Generate individual test case values out of test suites and do an identity mapping in case of a test case.
+
+        :param test_obj: test suite or test case, for test suites all test cases will be extracted from it
+        :return: a generator for test cases
+        """
         try:
             for i in test_obj:
                 for e in MergingRunner.flatten(i):
@@ -99,10 +116,18 @@ class MergingRunner:
             pattern: str = 'test*.py',
             top_level_dir: str = None,
             html_result_assets: HtmlResultAssets = None,
-            # doc_title: str = 'Unittest results',
-            # html_file_name: str = 'test_result',
-            # result_path: pathlib.Path = None
     ) -> typing.List[mpunittest.result.MergeableResult]:
+        """
+        Discover test cases in modules matching the given pattern in the given directory.
+
+        :param start_dir: directory to search in
+        :param pattern: pattern to check modules against
+        :param top_level_dir: same as top_level_dir parameter of unittest.loader.discover
+        :param html_result_assets: if given an HTML file containing the results will be generated
+        according to the parameters in the given asset or with default parameters in case all are None,
+        otherwise no files are generated
+        :return: list of test case results
+        """
         start = time.monotonic_ns()
 
         if html_result_assets:
@@ -127,10 +152,16 @@ class MergingRunner:
             html_file_name = None
 
         child_processes = list()
-        process_conn_tuples: typing.List[typing.Tuple[
+        process_conn_with_process_tuples: typing.List[typing.Tuple[
             multiprocessing.connection.Connection,
-            multiprocessing.connection.Connection]
+            multiprocessing.connection.Connection,
+            multiprocessing.process.BaseProcess]
         ] = list()
+
+        parent_conn_to_process_mapping: typing.Dict[
+            multiprocessing.connection.Connection,
+            multiprocessing.process.BaseProcess
+        ] = dict()
 
         for _ in range(self._process_count):
             respective_parent_conn, child_conn = self._mp_context.Pipe(duplex=True)
@@ -143,24 +174,37 @@ class MergingRunner:
                                                            top_level_dir,
                                                            self._result_class,
                                                            result_path,))
-            child_processes.append(child_process)
+
+            self._logger.debug('will start process with name "%s"', child_process.name)
             child_process.start()
+            self._logger.info('started process with name "%s"', child_process.name)
 
-            process_conn_tuples.append((respective_parent_conn, child_conn))
+            process_conn_with_process_tuples.append((respective_parent_conn, child_conn, child_process))
+            parent_conn_to_process_mapping[respective_parent_conn] = child_process
 
+        self._logger.debug('primary runner process will start discovery in directory "%s" '
+                           'with pattern "%s" and top level directory "%s"',
+                           start_dir, pattern, top_level_dir)
         test_ids = MergingRunner._discover_ids(start_dir=start_dir,
                                                pattern=pattern,
                                                top_level_dir=top_level_dir)
+        self._logger.info('primary runner process finished discovery')
         test_id_count = len(test_ids)
+        self._logger.info('primary runner process discovered %i test(s) in "%s"',
+                          test_id_count,
+                          start_dir.as_uri())
 
         if platform.system() != 'Windows':
             read_selector = selectors.DefaultSelector()
-            for respective_parent_conn, child_conn in process_conn_tuples:
+            for respective_parent_conn, child_conn, _ in process_conn_with_process_tuples:
                 read_selector.register(respective_parent_conn, selectors.EVENT_READ)
 
-        for conn, _ in process_conn_tuples:
+        for conn, _, process in process_conn_with_process_tuples:
             try:
-                conn.send(test_ids.pop())  # TODO: consider doing this in while True loop below
+                test_id = test_ids.pop()
+                conn.send(test_id)  # TODO: consider doing this in while True loop below
+                self._logger.info('primary runner process delegated run of %s to %s',
+                                  test_id, process.name)
             except IndexError:
                 break
 
@@ -168,7 +212,7 @@ class MergingRunner:
 
         if platform.system() != 'Windows':
             write_selectors = dict()
-            for respective_parent_conn, child_conn in process_conn_tuples:
+            for respective_parent_conn, child_conn, _ in process_conn_with_process_tuples:
                 assert respective_parent_conn.fileno() not in write_selectors
                 specific_write_selector = selectors.DefaultSelector()
                 specific_write_selector.register(respective_parent_conn, selectors.EVENT_WRITE)
@@ -181,19 +225,29 @@ class MergingRunner:
                 read_events = read_selector.select(timeout=0.001)
                 for key, mask in read_events:
                     respective_parent_conn = key.fileobj
-                    test_results.append(respective_parent_conn.recv())
+                    test_result = respective_parent_conn.recv()
+                    test_results.append(test_result)
+                    self._logger.info('process with the name "%s" finished a '
+                                      'run with the following result: "%s"',
+                                      parent_conn_to_process_mapping[respective_parent_conn].name,
+                                      test_result.test_id_to_result_mapping)
 
                     next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
             else:
                 for respective_parent_conn in multiprocessing.connection.wait(
-                        [c for c, _ in process_conn_tuples], timeout=0.001):
-                    test_results.append(respective_parent_conn.recv())
+                        [c for c, _, __ in process_conn_with_process_tuples], timeout=0.001):
+                    test_result = respective_parent_conn.recv()
+                    test_results.append(test_result)
+                    self._logger.info('process with the name "%s" finished a '
+                                      'run with the following result: "%s"',
+                                      parent_conn_to_process_mapping[respective_parent_conn].name,
+                                      test_result.test_id_to_result_mapping)
 
                     next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
 
             if not test_ids:
                 # TODO: compare sets of fileno instead
-                if len(next_to_send) == min(test_id_count, len(process_conn_tuples)):
+                if len(next_to_send) == min(test_id_count, len(process_conn_with_process_tuples)):
                     break
 
                 continue
@@ -208,36 +262,60 @@ class MergingRunner:
                         respective_parent_conn = key.fileobj
 
                         try:
-                            respective_parent_conn.send(test_ids.pop())
+                            test_id = test_ids.pop()
+                            respective_parent_conn.send(test_id)
+                            self._logger.info('primary runner process delegated run of %s to %s',
+                                              test_id,
+                                              parent_conn_to_process_mapping[conn].name)
                         except IndexError:
                             break
                         next_to_send.remove(conn)
                 else:
                     try:
-                        conn.send(test_ids.pop())
+                        test_id = test_ids.pop()
+                        conn.send(test_id)
+                        self._logger.info('primary runner process delegated run of %s to %s',
+                                          test_id,
+                                          parent_conn_to_process_mapping[conn].name)
                     except IndexError:
                         continue
                     next_to_send.remove(conn)
 
         # cleanup starts here
-        for respective_parent_conn, child_conn in process_conn_tuples:
+        for respective_parent_conn, child_conn, child_process in process_conn_with_process_tuples:
+            self._logger.debug('will send termination signal to process with name "%s"',
+                               child_process.name)
             respective_parent_conn.send(-1)
+            self._logger.info('send termination signal to process with name "%s"',
+                              child_process.name)
             answer_for_shutdown_request = respective_parent_conn.recv()  # TODO: implement values other than -2
             assert answer_for_shutdown_request == -2
+            self._logger.info('received termination signal from process with name "%s"',
+                              child_process.name)
             respective_parent_conn.close()
 
+        self._logger.debug('will wait for child processes to finish')
         for child_process in child_processes:
             child_process.join()
+            exit_code = child_process.exitcode
+            if not exit_code == 0:
+                self._logger.error('process with name "%s" exited with code "%i"',
+                                   child_process.name,
+                                   exit_code)
+                raise RuntimeError(f'Expected exitcode of {child_process.name} to be 0, '
+                                   f'but it is {exit_code} instead.')
 
         end = time.monotonic_ns()
-        total_time_spent_ns = end - start
+        total_time_spent_ns = end - start  # TODO: maybe add up the subprocess times instead
 
         if html_result_assets:
+            self._logger.debug('will generate html file in %s', result_path)
             self._generate_html(test_results=test_results,
                                 result_path=result_path,
                                 total_time_spent_ns=total_time_spent_ns,
                                 doc_title=doc_title,
                                 html_file_name=html_file_name)
+            self._logger.info('generated html file in %s', result_path)
 
         return test_results
 
@@ -286,11 +364,27 @@ class MergingRunner:
             top_level_dir: str,
             result_class: typing.Type[mpunittest.result.MergeableResult],
             result_path: pathlib.Path
-    ):
+    ) -> None:
+        """
+        Run inside of child processes and execute test cases with the ids that are send to the
+        respective child process.
+        Also send back the result of the execution and optionally write stderr and stdout in a file
+        together with the result.
+
+        :param child_conn: connection to receive test ids on
+        :param start_dir: directory to search for test cases to eventually load them and execute them
+        if requested
+        :param pattern: pattern to check modules against
+        :param top_level_dir: same as top_level_dir parameter of unittest.loader.discover
+        :param result_class: type to instantiate for saving unittest results
+        :param result_path: path to generate result files in, can be None to not generate any files
+        :return: None
+        """
         try:
             id_to_test_mapping = MergingRunner._discover_id_to_test_mapping(start_dir, pattern, top_level_dir)
 
-            time_str = str(time.time()).replace('.', '_')  # TODO: consider using the time for the dir instead of file names
+            # TODO: consider using the time for the dir instead of file names
+            time_str = str(time.time()).replace('.', '_')
             filename_postfix = f'pid{os.getpid()}_t{time_str}'
             stderr_filename = 'stderr' + filename_postfix
             stdout_filename = 'stdout' + filename_postfix
@@ -343,10 +437,12 @@ class MergingRunner:
                                 open(final_stdout_filename, 'rb') as stdout_file:
                             if len(result.test_id_to_result_mapping) == 1:
                                 id_to_write = list(result.test_id_to_result_mapping.keys())[0]
-                                merged.write(f'Log for test with id {id_to_write} run at {time_str}: \n\n'.encode('utf8'))
+                                merged.write(f'Log for test with id {id_to_write} '
+                                             f'run at {time_str}: \n\n'.encode('utf8'))
                             else:
                                 ids_to_write = set(result.test_id_to_result_mapping.keys())
-                                merged.write(f'Log for tests with ids {ids_to_write} run at {time_str}: \n\n'.encode('utf8'))
+                                merged.write(f'Log for tests with ids {ids_to_write} '
+                                             f'run at {time_str}: \n\n'.encode('utf8'))
                             merged.write(('#' * 10 + ' ' * 2 + 'stderr' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
                             MergingRunner.copy_content_with_limited_buffer(stderr_file, merged)
                             merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
@@ -366,7 +462,15 @@ class MergingRunner:
             src: typing.IO,
             dst: typing.IO,
             buffer_size: int = 1000
-    ):
+    ) -> None:
+        """
+        Copy data from src to dst.
+
+        :param src: io object to read from
+        :param dst: io object to write to i.e. to copy to
+        :param buffer_size: maximum amount of unit defined by the given io objects to read per iteration
+        :return: None
+        """
         while True:
             data = src.read(buffer_size)
             if not data:
