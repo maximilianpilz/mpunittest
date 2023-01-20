@@ -2,22 +2,24 @@
 mpunittest
 **********
 
-.. image:: https://img.shields.io/pypi/pyversions/mpunittest
+|img1| |img2| |img3| |img4| |img5| |img6|
+
+.. |img1| image:: https://img.shields.io/pypi/pyversions/mpunittest
    :alt: pypi python version(s)
 
-.. image:: https://img.shields.io/pypi/implementation/mpunittest
+.. |img2| image:: https://img.shields.io/pypi/implementation/mpunittest
    :alt: pypi implementation
 
-.. image:: https://img.shields.io/pypi/status/mpunittest
+.. |img3| image:: https://img.shields.io/pypi/status/mpunittest
    :alt: pypi development status
 
-.. image:: https://img.shields.io/pypi/v/mpunittest
+.. |img4| image:: https://img.shields.io/pypi/v/mpunittest
    :alt: pypi latest version
 
-.. image:: https://img.shields.io/pypi/dm/mpunittest
+.. |img5| image:: https://img.shields.io/pypi/dm/mpunittest
    :alt: pypi downloads per month
 
-.. image:: https://img.shields.io/badge/tested%20on-macos%20%7C%20ubuntu%20%7C%20windows-blue
+.. |img6| image:: https://img.shields.io/badge/tested%20on-macos%20%7C%20ubuntu%20%7C%20windows-blue
    :alt: tested on which operating systems
 
 
