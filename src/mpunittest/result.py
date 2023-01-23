@@ -131,7 +131,7 @@ class MergeableResult:
         self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.FAIL
 
     def wasSuccessful(self) -> bool:
-        # TODO: implement while considering expected failures
+        # TODO: consider expected failures
         return self.overall_result() == self.Result.PASS
 
     def stop(self) -> None:

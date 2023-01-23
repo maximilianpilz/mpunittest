@@ -89,6 +89,7 @@ class MergingRunner:
         :param daemons: will be used as daemon flag for process creation
         :param result_class: type to instantiate for saving unittest results
         """
+        assert process_count > 0
         self._process_count = process_count
 
         if mp_context is None:
@@ -203,6 +204,11 @@ class MergingRunner:
 
             process_conn_with_process_tuples.append((respective_parent_conn, child_conn, child_process))
             parent_conn_to_process_mapping[respective_parent_conn] = child_process
+            child_processes.append(child_process)
+
+        assert set(child_processes) == \
+               set(parent_conn_to_process_mapping.values()) == \
+               set((p for _, __, p in process_conn_with_process_tuples))
 
         self._logger.debug('primary runner process will start discovery in directory "%s" '
                            'with pattern "%s" and top level directory "%s"',
@@ -224,6 +230,7 @@ class MergingRunner:
         for conn, _, process in process_conn_with_process_tuples:
             try:
                 test_id = test_ids.pop()
+                # TODO: check whether it is writeable
                 conn.send(test_id)  # TODO: consider doing this in while True loop below
                 self._logger.info('primary runner process delegated run of %s to %s',
                                   test_id, process.name)
@@ -242,7 +249,16 @@ class MergingRunner:
 
         test_results = list()
 
+        assert child_processes
+        loop_counter = 0
         while True:
+            if loop_counter == 0:
+                if not all(map(multiprocessing.Process.is_alive, child_processes)):
+                    raise RuntimeError('At least one process terminated prematurely.')
+
+            loop_counter += 1
+            loop_counter %= 100
+
             if platform.system() != 'Windows':
                 read_events = read_selector.select(timeout=0.001)
                 for key, mask in read_events:
@@ -317,6 +333,7 @@ class MergingRunner:
             respective_parent_conn.close()
 
         self._logger.debug('will wait for child processes to finish')
+        assert child_processes
         for child_process in child_processes:
             child_process.join()
             exit_code = child_process.exitcode
