@@ -147,6 +147,7 @@ class MergingRunner:
         :param html_result_assets: if given an HTML file containing the results will be generated
         according to the parameters in the given asset or with default parameters in case all are None,
         otherwise no files are generated
+        :param time_unit: unit for displaying the time spent
         :return: list of test case results
         """
         start = time.monotonic_ns()
