@@ -18,6 +18,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 import collections
 import contextlib
 import copy
+import enum
 import multiprocessing
 import multiprocessing.connection
 import os
@@ -38,7 +39,7 @@ import mpunittest.streamctx
 
 _tr_template = \
     """
-<tr>
+<tr id="{html_id_string}">
     <td>{test_id}</td>
     <td>{duration}</td>
     <td>
@@ -48,6 +49,25 @@ _tr_template = \
     """
 
 HtmlResultAssets = collections.namedtuple('HtmlResultAssets', ('document_title', 'document_file_name', 'result_path'))
+
+
+class TimeUnit(int, enum.Enum):
+    """
+    Time units given in nanoseconds.
+    """
+    NANOSECONDS = 0
+    MICROSECONDS = 3
+    MILLISECONDS = 6
+    SECONDS = 9
+
+
+def ns_to_time_unit(time_spent: int, time_unit: TimeUnit) -> str:
+    time_digits = list()
+    time_digits.append(time_spent // (10 ** time_unit))
+    next_digits = time_spent % (10 ** time_unit)
+    if next_digits:
+        time_digits.append('0' * (time_unit - len(str(next_digits))) + str(next_digits).rstrip('0'))
+    return '.'.join(map(str, time_digits)) + ' ' + time_unit.name.lower()
 
 
 class MergingRunner:
@@ -116,6 +136,7 @@ class MergingRunner:
             pattern: str = 'test*.py',
             top_level_dir: str = None,
             html_result_assets: HtmlResultAssets = None,
+            time_unit: TimeUnit = TimeUnit.SECONDS
     ) -> typing.List[mpunittest.result.MergeableResult]:
         """
         Discover test cases in modules matching the given pattern in the given directory.
@@ -314,7 +335,8 @@ class MergingRunner:
                                 result_path=result_path,
                                 total_time_spent_ns=total_time_spent_ns,
                                 doc_title=doc_title,
-                                html_file_name=html_file_name)
+                                html_file_name=html_file_name,
+                                time_unit=time_unit)
             self._logger.info('generated html file in %s', result_path)
 
         return test_results
@@ -324,7 +346,8 @@ class MergingRunner:
                        result_path: pathlib.Path,
                        total_time_spent_ns: int,
                        doc_title: str,
-                       html_file_name: str):
+                       html_file_name: str,
+                       time_unit: TimeUnit):
         with open(
                 pathlib.Path(mpunittest.html.__file__).parent.joinpath('result.html'), 'r'
         ) as html_template:
@@ -336,23 +359,87 @@ class MergingRunner:
         for match in matches:
             template_data = template_data.replace(match, '')
 
-        table_data = str()
+        table_row_data = list()
         for test_result in test_results:
             assert test_result.log_file.is_file()
 
             for test_id, extra_class in test_result.test_id_to_result_mapping.items():
-                table_data += _tr_template.format(
-                    test_id=test_id,
-                    duration=f'{test_result.time_spent_per_test_id[test_id]}ns',
-                    log_file=test_result.log_file.name,
-                    extra_class=extra_class,
-                    text=extra_class.upper()
+                table_row_data.append(
+                    (test_id,
+                     test_result.time_spent_per_test_id[test_id],
+                     test_result.log_file.name,
+                     extra_class)
                 )
+        table_row_data = [(i, *d) for i, d in enumerate(table_row_data)]
+
+        table_rows_string = str()
+
+        pass_count = 0
+        fail_count = 0
+        skip_count = 0
+
+        for index, test_id, time_spent, log_file_name, extra_class in table_row_data:
+            table_rows_string += _tr_template.format(
+                html_id_string=str(index),
+                test_id=test_id,
+                duration=ns_to_time_unit(time_spent=time_spent, time_unit=time_unit),
+                log_file=log_file_name,
+                extra_class=extra_class,
+                text=extra_class.upper()
+            )
+
+            if extra_class == mpunittest.result.MergeableResult.Result.PASS:
+                pass_count += 1
+            elif extra_class == mpunittest.result.MergeableResult.Result.FAIL:
+                fail_count += 1
+            elif extra_class == mpunittest.result.MergeableResult.Result.SKIPPED:
+                skip_count += 1
+            else:
+                # TODO: also call logger here
+                raise ValueError(f'Unexpected value for extra_class: '
+                                 f'"{extra_class}" of type "{type(extra_class)}"')
+
+        total_count = sum((pass_count, fail_count, skip_count))
+
+        original_order = [e[0] for e in table_row_data]
+
+        # sort by test_id
+        sorted_by_name_asc = [e[0] for e in sorted(
+            table_row_data, key=lambda e: e[1])]
+        sorted_by_name_desc = [e[0] for e in sorted(
+            table_row_data, key=lambda e: e[1], reverse=True)]
+
+        # sort by time_spent
+        sorted_by_time_asc = [e[0] for e in sorted(
+            table_row_data, key=lambda e: e[2])]
+        sorted_by_time_desc = [e[0] for e in sorted(
+            table_row_data, key=lambda e: e[2], reverse=True)]
 
         with open(result_path.joinpath(f'{html_file_name}.html'), 'w') as final_html_file:
-            final_html_data = template_data.replace('{table_rows}', table_data)
-            final_html_data = final_html_data.replace('{time}', f'{total_time_spent_ns}ns')
-            final_html_data = final_html_data.replace('{title}', doc_title)
+            final_html_data = template_data.format(
+                title=doc_title,
+                table_title=doc_title,
+                time=f'{ns_to_time_unit(time_spent=total_time_spent_ns, time_unit=time_unit)}',
+                total_count=total_count,
+                pass_count=pass_count,
+                fail_count=fail_count,
+                skip_count=skip_count,
+                table_rows=table_rows_string,
+                ordered_by_name=','.join(
+                    map(str,
+                        [
+                            original_order,
+                            sorted_by_name_asc,
+                            sorted_by_name_desc
+                        ])),
+                ordered_by_time=','.join(
+                    map(str,
+                        [
+                            original_order,
+                            sorted_by_time_asc,
+                            sorted_by_time_desc
+                        ]))
+            )
 
             final_html_file.write(final_html_data)
 

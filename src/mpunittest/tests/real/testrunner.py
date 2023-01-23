@@ -22,8 +22,8 @@ import tempfile
 import unittest
 import unittest.mock
 
-import mpunittest.runner
 import mpunittest.result
+import mpunittest.runner
 import mpunittest.tests.dummy.dirs
 
 
@@ -48,6 +48,80 @@ class TestRunner(unittest.TestCase):
             (test_case_3,),
             tuple(mpunittest.runner.MergingRunner.flatten(test_case_3))
         )
+
+    def test_time_conversion(self):
+
+        self.assertEqual('0.000000001 ' + mpunittest.runner.TimeUnit.SECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             1,
+                             mpunittest.runner.TimeUnit.SECONDS)
+                         )
+
+        self.assertEqual('0.1 ' + mpunittest.runner.TimeUnit.SECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             int(10 ** 8),
+                             mpunittest.runner.TimeUnit.SECONDS)
+                         )
+
+        self.assertEqual('1 ' + mpunittest.runner.TimeUnit.SECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             int(10 ** 9),
+                             mpunittest.runner.TimeUnit.SECONDS)
+                         )
+
+        self.assertEqual('11.67 ' + mpunittest.runner.TimeUnit.SECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             1167 * int(10 ** 7),
+                             mpunittest.runner.TimeUnit.SECONDS)
+                         )
+
+        self.assertEqual('1.55 ' + mpunittest.runner.TimeUnit.MILLISECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             1550000,
+                             mpunittest.runner.TimeUnit.MILLISECONDS)
+                         )
+
+        self.assertEqual('1 ' + mpunittest.runner.TimeUnit.MILLISECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             1000000,
+                             mpunittest.runner.TimeUnit.MILLISECONDS)
+                         )
+
+        self.assertEqual('0.5 ' + mpunittest.runner.TimeUnit.MILLISECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             500000,
+                             mpunittest.runner.TimeUnit.MILLISECONDS)
+                         )
+
+        self.assertEqual('0.5 ' + mpunittest.runner.TimeUnit.MICROSECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             500,
+                             mpunittest.runner.TimeUnit.MICROSECONDS)
+                         )
+
+        self.assertEqual('5 ' + mpunittest.runner.TimeUnit.MICROSECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             5000,
+                             mpunittest.runner.TimeUnit.MICROSECONDS)
+                         )
+
+        self.assertEqual('50 ' + mpunittest.runner.TimeUnit.MICROSECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             50000,
+                             mpunittest.runner.TimeUnit.MICROSECONDS)
+                         )
+
+        self.assertEqual('500 ' + mpunittest.runner.TimeUnit.NANOSECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             500,
+                             mpunittest.runner.TimeUnit.NANOSECONDS)
+                         )
+
+        self.assertEqual('5000000000 ' + mpunittest.runner.TimeUnit.NANOSECONDS.name.lower(),
+                         mpunittest.runner.ns_to_time_unit(
+                             5000000000,
+                             mpunittest.runner.TimeUnit.NANOSECONDS)
+                         )
 
     def test_discover_and_run(self):
 
