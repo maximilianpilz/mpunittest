@@ -347,6 +347,8 @@ class MergingRunner:
         end = time.monotonic_ns()
         total_time_spent_ns = end - start  # TODO: maybe add up the subprocess times instead
 
+        assert len(test_results) == test_id_count
+
         if html_result_assets:
             self._logger.debug('will generate html file in %s', result_path)
             self._generate_html(test_results=test_results,
