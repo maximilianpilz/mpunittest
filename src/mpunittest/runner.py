@@ -328,7 +328,7 @@ class MergingRunner:
                               child_process.name)
             answer_for_shutdown_request = respective_parent_conn.recv()  # TODO: implement values other than -2
             assert answer_for_shutdown_request == -2
-            self._logger.info('received termination signal from process with name "%s"',
+            self._logger.info('received termination confirmation from process with name "%s"',
                               child_process.name)
             respective_parent_conn.close()
 
