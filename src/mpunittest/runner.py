@@ -17,21 +17,21 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 import collections
 import contextlib
-import copy
+import dataclasses
 import enum
 import multiprocessing
 import multiprocessing.connection
+import multiprocessing.shared_memory
 import os
 import pathlib
-import platform
 import re
-import selectors
 import tempfile
 import time
 import typing
 import unittest
 import uuid
 
+import mpunittest.comm
 import mpunittest.html
 import mpunittest.logging
 import mpunittest.result
@@ -49,6 +49,19 @@ _tr_template = \
     """
 
 HtmlResultAssets = collections.namedtuple('HtmlResultAssets', ('document_title', 'document_file_name', 'result_path'))
+
+
+class TempDirOrDummyContextManagerFactory(typing.Protocol):
+    def __call__(self) -> contextlib.AbstractContextManager[str]: ...
+
+
+@dataclasses.dataclass
+class LogFileParameters:
+    log_file_names: typing.List[typing.Optional[pathlib.Path]]
+
+    temp_dir_ctx: TempDirOrDummyContextManagerFactory
+    stderr_redirect_ctx: mpunittest.streamctx.RedirectionContextManagerFactory
+    stdout_redirect_ctx: mpunittest.streamctx.RedirectionContextManagerFactory
 
 
 class TimeUnit(int, enum.Enum):
@@ -70,6 +83,11 @@ def ns_to_time_unit(time_spent: int, time_unit: TimeUnit) -> str:
     return '.'.join(map(str, time_digits)) + ' ' + time_unit.name.lower()
 
 
+class IPCMethod(enum.Enum):
+    SHARED_MEMORY = 0
+    PIPE_BASED_QUEUE = 1
+
+
 class MergingRunner:
     """
     An unittest runner for parallel unittest execution that (optionally) can merge results into a file.
@@ -82,7 +100,8 @@ class MergingRunner:
                  process_count: int = 2,
                  mp_context: multiprocessing.context.BaseContext = None,
                  daemons: bool = True,
-                 result_class=mpunittest.result.MergeableResult):
+                 result_class=mpunittest.result.SubProcessResult,
+                 ipc_method: IPCMethod = IPCMethod.SHARED_MEMORY):
         """
         :param process_count: amount of process to start for delegating unittest execution to them
         :param mp_context: multiprocessing context to use for starting the processes e.g. the 'spawn' context
@@ -99,6 +118,16 @@ class MergingRunner:
 
         self._result_class = result_class
         self._daemons = daemons
+
+        self._ipc_method = ipc_method
+
+        if self._ipc_method == IPCMethod.SHARED_MEMORY:
+            self._logger.warning(f'{self.__class__.__name__} instance is configured to use '
+                                 f'the {IPCMethod.__name__} "{self._ipc_method}", which is an '
+                                 f'experimental feature, there may be memory leaks outside of '
+                                 f'the memory space of processes. If you do not want this, '
+                                 f'you can specify another {IPCMethod.__name__} such as '
+                                 f'{IPCMethod.PIPE_BASED_QUEUE} to be used')
 
     @staticmethod
     def flatten(test_obj: typing.Union[unittest.TestSuite, unittest.TestCase]) -> typing.Generator:
@@ -131,6 +160,30 @@ class MergingRunner:
 
         return {test.id(): test for test in test_generator}
 
+    @staticmethod
+    def _get_log_file_parameters(result_path, result_file_count: int):
+
+        if result_path:
+            log_file_names = [result_path.joinpath('test' + uuid.uuid4().hex + '.log')
+                              for _ in range(result_file_count)]
+            assert len(set(log_file_names)) == len(log_file_names)
+
+            temp_dir_ctx = tempfile.TemporaryDirectory
+            stderr_redirect_ctx = mpunittest.streamctx.redirect_stderr_to_file
+            stdout_redirect_ctx = mpunittest.streamctx.redirect_stdout_to_file
+
+        else:
+            log_file_names = [None] * result_file_count
+
+            temp_dir_ctx = MergingRunner.dummy_context
+            stderr_redirect_ctx = MergingRunner.dummy_context
+            stdout_redirect_ctx = MergingRunner.dummy_context
+
+        return LogFileParameters(log_file_names=log_file_names,
+                                 temp_dir_ctx=temp_dir_ctx,
+                                 stderr_redirect_ctx=stderr_redirect_ctx,
+                                 stdout_redirect_ctx=stdout_redirect_ctx)
+
     def discover_and_run(
             self,
             start_dir: pathlib.Path,
@@ -138,7 +191,7 @@ class MergingRunner:
             top_level_dir: str = None,
             html_result_assets: HtmlResultAssets = None,
             time_unit: TimeUnit = TimeUnit.SECONDS
-    ) -> typing.List[mpunittest.result.MergeableResult]:
+    ) -> typing.List[typing.Tuple[str, mpunittest.comm.TransmissionCode, int]]:
         """
         Discover test cases in modules matching the given pattern in the given directory.
 
@@ -149,7 +202,7 @@ class MergingRunner:
         according to the parameters in the given asset or with default parameters in case all are None,
         otherwise no files are generated
         :param time_unit: unit for displaying the time spent
-        :return: list of test case results
+        :return: TODO
         """
         start = time.monotonic_ns()
 
@@ -174,42 +227,6 @@ class MergingRunner:
             doc_title = None
             html_file_name = None
 
-        child_processes = list()
-        process_conn_with_process_tuples: typing.List[typing.Tuple[
-            multiprocessing.connection.Connection,
-            multiprocessing.connection.Connection,
-            multiprocessing.process.BaseProcess]
-        ] = list()
-
-        parent_conn_to_process_mapping: typing.Dict[
-            multiprocessing.connection.Connection,
-            multiprocessing.process.BaseProcess
-        ] = dict()
-
-        for _ in range(self._process_count):
-            respective_parent_conn, child_conn = self._mp_context.Pipe(duplex=True)
-
-            child_process = self._mp_context.Process(daemon=self._daemons,
-                                                     target=self.process_target,
-                                                     args=(child_conn,
-                                                           start_dir,
-                                                           pattern,
-                                                           top_level_dir,
-                                                           self._result_class,
-                                                           result_path,))
-
-            self._logger.debug('will start process with name "%s"', child_process.name)
-            child_process.start()
-            self._logger.info('started process with name "%s"', child_process.name)
-
-            process_conn_with_process_tuples.append((respective_parent_conn, child_conn, child_process))
-            parent_conn_to_process_mapping[respective_parent_conn] = child_process
-            child_processes.append(child_process)
-
-        assert set(child_processes) == \
-               set(parent_conn_to_process_mapping.values()) == \
-               set((p for _, __, p in process_conn_with_process_tuples))
-
         self._logger.debug('primary runner process will start discovery in directory "%s" '
                            'with pattern "%s" and top level directory "%s"',
                            start_dir, pattern, top_level_dir)
@@ -222,136 +239,87 @@ class MergingRunner:
                           test_id_count,
                           start_dir.as_uri())
 
-        if platform.system() != 'Windows':
-            read_selector = selectors.DefaultSelector()
-            for respective_parent_conn, child_conn, _ in process_conn_with_process_tuples:
-                read_selector.register(respective_parent_conn, selectors.EVENT_READ)
+        log_file_parameters: LogFileParameters = self._get_log_file_parameters(
+            result_path=result_path,
+            result_file_count=test_id_count
+        )
 
-        for conn, _, process in process_conn_with_process_tuples:
-            try:
-                test_id = test_ids.pop()
-                # TODO: check whether it is writeable
-                conn.send(test_id)  # TODO: consider doing this in while True loop below
-                self._logger.info('primary runner process delegated run of %s to %s',
-                                  test_id, process.name)
-            except IndexError:
-                break
+        if self._ipc_method == IPCMethod.SHARED_MEMORY:  # TODO: change type of _ipc_method to call it here
+            communicator = mpunittest.comm.SharedMemoryCommunicator(
+                code_count=test_id_count, mp_context=self._mp_context
+            )
+        elif self._ipc_method == IPCMethod.PIPE_BASED_QUEUE:
+            communicator = mpunittest.comm.PipeCommunicator(
+                code_count=test_id_count, mp_context=self._mp_context)
+        else:
+            raise NotImplementedError
 
-        next_to_send = list()
+        try:
+            child_processes = list()
 
-        if platform.system() != 'Windows':
-            write_selectors = dict()
-            for respective_parent_conn, child_conn, _ in process_conn_with_process_tuples:
-                assert respective_parent_conn.fileno() not in write_selectors
-                specific_write_selector = selectors.DefaultSelector()
-                specific_write_selector.register(respective_parent_conn, selectors.EVENT_WRITE)
-                write_selectors[respective_parent_conn.fileno()] = specific_write_selector
+            # TODO: consider using test_ids without enumeration
+            enumerated_test_ids = tuple(enumerate(test_ids))  # TODO: evaluate whether this is really necessary
 
-        test_results = list()
+            for _ in range(self._process_count):
+                child_process = self._mp_context.Process(daemon=self._daemons,
+                                                         target=self.process_target,
+                                                         args=(enumerated_test_ids,
+                                                               communicator,
+                                                               start_dir,
+                                                               pattern,
+                                                               top_level_dir,
+                                                               self._result_class,
+                                                               log_file_parameters
+                                                               ,))
 
-        assert child_processes
-        loop_counter = 0
-        while True:
-            if loop_counter == 0:
-                if not all(map(multiprocessing.Process.is_alive, child_processes)):
-                    raise RuntimeError('At least one process terminated prematurely.')
+                self._logger.debug('will start process with name "%s"', child_process.name)
+                child_process.start()
+                self._logger.info('started process with name "%s"', child_process.name)
 
-            loop_counter += 1
-            loop_counter %= 100
+                child_processes.append(child_process)
 
-            if platform.system() != 'Windows':
-                read_events = read_selector.select(timeout=0.001)
-                for key, mask in read_events:
-                    respective_parent_conn = key.fileobj
-                    test_result = respective_parent_conn.recv()
-                    test_results.append(test_result)
-                    self._logger.info('process with the name "%s" finished a '
-                                      'run with the following result: "%s"',
-                                      parent_conn_to_process_mapping[respective_parent_conn].name,
-                                      test_result.test_id_to_result_mapping)
+            assert len(child_processes) == self._process_count
 
-                    next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
-            else:
-                for respective_parent_conn in multiprocessing.connection.wait(
-                        [c for c, _, __ in process_conn_with_process_tuples], timeout=0.001):
-                    test_result = respective_parent_conn.recv()
-                    test_results.append(test_result)
-                    self._logger.info('process with the name "%s" finished a '
-                                      'run with the following result: "%s"',
-                                      parent_conn_to_process_mapping[respective_parent_conn].name,
-                                      test_result.test_id_to_result_mapping)
+            self._logger.debug('will wait for child processes to finish')
+            assert child_processes
+            for child_process in child_processes:
+                child_process.join()
+                exit_code = child_process.exitcode
 
-                    next_to_send.append(respective_parent_conn)  # TODO: only do this when recv was successful
+                # since no timeout was provided exit_code is not allowed to be None
+                assert exit_code is not None, 'exitcode was None even though no timeout was provided to join'
 
-            if not test_ids:
-                # TODO: compare sets of fileno instead
-                if len(next_to_send) == min(test_id_count, len(process_conn_with_process_tuples)):
-                    break
+                if not exit_code == 0:
+                    self._logger.error('process with name "%s" exited with code "%i"',
+                                       child_process.name,
+                                       exit_code)
+                    raise RuntimeError(f'Expected exitcode of {child_process.name} to be 0, '
+                                       f'but it is {exit_code} instead.')
 
-                continue
+            if not communicator.is_finished():
+                raise RuntimeError('All subprocesses have been joined, but not all results are known.')
 
-            for conn in copy.copy(next_to_send):
-                if not test_ids:
-                    break
-
-                if platform.system() != 'Windows':
-                    write_events = write_selectors[conn.fileno()].select(timeout=0.0001)
-                    for key, mask in write_events:
-                        respective_parent_conn = key.fileobj
-
-                        try:
-                            test_id = test_ids.pop()
-                            respective_parent_conn.send(test_id)
-                            self._logger.info('primary runner process delegated run of %s to %s',
-                                              test_id,
-                                              parent_conn_to_process_mapping[conn].name)
-                        except IndexError:
-                            break
-                        next_to_send.remove(conn)
-                else:
-                    try:
-                        test_id = test_ids.pop()
-                        conn.send(test_id)
-                        self._logger.info('primary runner process delegated run of %s to %s',
-                                          test_id,
-                                          parent_conn_to_process_mapping[conn].name)
-                    except IndexError:
-                        continue
-                    next_to_send.remove(conn)
-
-        # cleanup starts here
-        for respective_parent_conn, child_conn, child_process in process_conn_with_process_tuples:
-            self._logger.debug('will send termination signal to process with name "%s"',
-                               child_process.name)
-            respective_parent_conn.send(-1)
-            self._logger.info('send termination signal to process with name "%s"',
-                              child_process.name)
-            answer_for_shutdown_request = respective_parent_conn.recv()  # TODO: implement values other than -2
-            assert answer_for_shutdown_request == -2
-            self._logger.info('received termination confirmation from process with name "%s"',
-                              child_process.name)
-            respective_parent_conn.close()
-
-        self._logger.debug('will wait for child processes to finish')
-        assert child_processes
-        for child_process in child_processes:
-            child_process.join()
-            exit_code = child_process.exitcode
-            if not exit_code == 0:
-                self._logger.error('process with name "%s" exited with code "%i"',
-                                   child_process.name,
-                                   exit_code)
-                raise RuntimeError(f'Expected exitcode of {child_process.name} to be 0, '
-                                   f'but it is {exit_code} instead.')
+            test_results = communicator.get_results()
+        finally:
+            communicator.close()
+            communicator.unlink()
 
         end = time.monotonic_ns()
         total_time_spent_ns = end - start  # TODO: maybe add up the subprocess times instead
 
         assert len(test_results) == test_id_count
 
+        converted_results = [(test_ids[result_index],
+                              mpunittest.result.TransmissionCodeToSimpleResult[result_transmission_code],
+                              result_duration,
+                              log_file_parameters.log_file_names[result_index])
+                             for result_index, result_transmission_code, result_duration in test_results]
+
+        assert all(c in mpunittest.result.SimpleResult for _, c, __, ___ in converted_results)
+
         if html_result_assets:
             self._logger.debug('will generate html file in %s', result_path)
-            self._generate_html(test_results=test_results,
+            self._generate_html(test_results=converted_results,
                                 result_path=result_path,
                                 total_time_spent_ns=total_time_spent_ns,
                                 doc_title=doc_title,
@@ -359,10 +327,10 @@ class MergingRunner:
                                 time_unit=time_unit)
             self._logger.info('generated html file in %s', result_path)
 
-        return test_results
+        return converted_results
 
     @staticmethod
-    def _generate_html(test_results: typing.List[mpunittest.result.MergeableResult],
+    def _generate_html(test_results: typing.List[typing.Tuple[str, mpunittest.comm.TransmissionCode, int]],
                        result_path: pathlib.Path,
                        total_time_spent_ns: int,
                        doc_title: str,
@@ -380,16 +348,15 @@ class MergingRunner:
             template_data = template_data.replace(match, '')
 
         table_row_data = list()
-        for test_result in test_results:
-            assert test_result.log_file.is_file()
+        for test_id, transmission_code, duration, log_file in test_results:
+            assert log_file.is_file()
 
-            for test_id, extra_class in test_result.test_id_to_result_mapping.items():
-                table_row_data.append(
-                    (test_id,
-                     test_result.time_spent_per_test_id[test_id],
-                     test_result.log_file.name,
-                     extra_class)
-                )
+            table_row_data.append(
+                (test_id,
+                 duration,
+                 log_file.name,
+                 transmission_code)
+            )
         table_row_data = [(i, *d) for i, d in enumerate(table_row_data)]
 
         table_rows_string = str()
@@ -397,6 +364,7 @@ class MergingRunner:
         pass_count = 0
         fail_count = 0
         skip_count = 0
+        error_count = 0
 
         for index, test_id, time_spent, log_file_name, extra_class in table_row_data:
             table_rows_string += _tr_template.format(
@@ -404,22 +372,24 @@ class MergingRunner:
                 test_id=test_id,
                 duration=ns_to_time_unit(time_spent=time_spent, time_unit=time_unit),
                 log_file=log_file_name,
-                extra_class=extra_class,
-                text=extra_class.upper()
+                extra_class=extra_class.name.lower(),
+                text=extra_class.name.upper()
             )
 
-            if extra_class == mpunittest.result.MergeableResult.Result.PASS:
+            if extra_class == mpunittest.result.SimpleResult.PASS:
                 pass_count += 1
-            elif extra_class == mpunittest.result.MergeableResult.Result.FAIL:
+            elif extra_class == mpunittest.result.SimpleResult.FAIL:
                 fail_count += 1
-            elif extra_class == mpunittest.result.MergeableResult.Result.SKIPPED:
+            elif extra_class == mpunittest.result.SimpleResult.SKIPPED:
                 skip_count += 1
+            elif extra_class == mpunittest.result.SimpleResult.ERROR:
+                error_count += 1
             else:
                 # TODO: also call logger here
                 raise ValueError(f'Unexpected value for extra_class: '
                                  f'"{extra_class}" of type "{type(extra_class)}"')
 
-        total_count = sum((pass_count, fail_count, skip_count))
+        total_count = sum((pass_count, fail_count, skip_count, error_count))
 
         original_order = [e[0] for e in table_row_data]
 
@@ -444,6 +414,7 @@ class MergingRunner:
                 pass_count=pass_count,
                 fail_count=fail_count,
                 skip_count=skip_count,
+                error_count=error_count,
                 table_rows=table_rows_string,
                 ordered_by_name=','.join(
                     map(str,
@@ -465,12 +436,13 @@ class MergingRunner:
 
     @staticmethod
     def process_target(
-            child_conn: multiprocessing.connection.Connection,
+            enumerated_test_ids,
+            communicator,
             start_dir: pathlib.Path,
             pattern: str,
             top_level_dir: str,
-            result_class: typing.Type[mpunittest.result.MergeableResult],
-            result_path: pathlib.Path
+            result_class: typing.Type[mpunittest.result.SubProcessResult],
+            log_file_parameters: LogFileParameters
     ) -> None:
         """
         Run inside of child processes and execute test cases with the ids that are send to the
@@ -478,7 +450,7 @@ class MergingRunner:
         Also send back the result of the execution and optionally write stderr and stdout in a file
         together with the result.
 
-        :param child_conn: connection to receive test ids on
+        :param enumerated_test_ids: TODO
         :param start_dir: directory to search for test cases to eventually load them and execute them
         if requested
         :param pattern: pattern to check modules against
@@ -488,40 +460,30 @@ class MergingRunner:
         :return: None
         """
         try:
+            index_to_test_id = {i: e for i, e in enumerated_test_ids}
+
+            temp_dir_ctx = log_file_parameters.temp_dir_ctx
+            stderr_redirect_ctx = log_file_parameters.stderr_redirect_ctx
+            stdout_redirect_ctx = log_file_parameters.stdout_redirect_ctx
+
             id_to_test_mapping = MergingRunner._discover_id_to_test_mapping(start_dir, pattern, top_level_dir)
 
-            # TODO: consider using the time for the dir instead of file names
-            time_str = str(time.time()).replace('.', '_')
+            time_str = str(time.time()).replace('.', '_')  # TODO: remove when no longer needed
             filename_postfix = f'pid{os.getpid()}_t{time_str}'
             stderr_filename = 'stderr' + filename_postfix
             stdout_filename = 'stdout' + filename_postfix
 
             while True:
-                # TODO:
-                #  consider doing read above and directly passing
-                #  it into a function that evaluates the test case
 
-                test_id = child_conn.recv()
-                if test_id == -1:
+                test_id_index = communicator.get()
+                if test_id_index is None:
                     break
+                test_id = index_to_test_id[test_id_index]
+                log_file_name = log_file_parameters.log_file_names[test_id_index]
 
-                if result_path:
-                    log_file_name = result_path.joinpath('test' + uuid.uuid4().hex + '.log')
+                result = result_class()  # TODO: add parameters here such as stream and verbosity
 
-                    temp_dir_ctx = tempfile.TemporaryDirectory
-                    stderr_redirect_ctx = mpunittest.streamctx.redirect_stderr_to_file
-                    stdout_redirect_ctx = mpunittest.streamctx.redirect_stdout_to_file
-
-                else:
-                    log_file_name = None
-
-                    temp_dir_ctx = MergingRunner.dummy_context
-                    stderr_redirect_ctx = MergingRunner.dummy_context
-                    stdout_redirect_ctx = MergingRunner.dummy_context
-
-                result = result_class(log_file_path=log_file_name)
-
-                with temp_dir_ctx() as temp_dir:
+                with temp_dir_ctx() as temp_dir:  # TODO: move out of loop
 
                     if temp_dir:
                         temp_path = pathlib.Path(temp_dir).resolve()
@@ -534,35 +496,36 @@ class MergingRunner:
                     with \
                             stderr_redirect_ctx(final_stderr_filename), \
                             stdout_redirect_ctx(final_stdout_filename):
+
+                        result.startTestRun()
                         # execute test here
                         id_to_test_mapping[test_id](result)
+                        result.stopTestRun()
+
+                    transmission_code, str_output = result.overall_result
 
                     if log_file_name:
                         with \
                                 open(log_file_name, 'wb') as merged, \
                                 open(final_stderr_filename, 'rb') as stderr_file, \
                                 open(final_stdout_filename, 'rb') as stdout_file:
-                            if len(result.test_id_to_result_mapping) == 1:
-                                id_to_write = list(result.test_id_to_result_mapping.keys())[0]
-                                merged.write(f'Log for test with id {id_to_write} '
-                                             f'run at {time_str}: \n\n'.encode('utf8'))
-                            else:
-                                ids_to_write = set(result.test_id_to_result_mapping.keys())
-                                merged.write(f'Log for tests with ids {ids_to_write} '
-                                             f'run at {time_str}: \n\n'.encode('utf8'))
+                            merged.write(f'Log for "{test_id}" '
+                                         f'run at {time_str}: \n\n'.encode('utf8'))
+
                             merged.write(('#' * 10 + ' ' * 2 + 'stderr' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
                             MergingRunner.copy_content_with_limited_buffer(stderr_file, merged)
                             merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
                             merged.write(('#' * 10 + ' ' * 2 + 'stdout' + ' ' * 2 + '#' * 10 + '\n\n').encode('utf8'))
                             MergingRunner.copy_content_with_limited_buffer(stdout_file, merged)
                             merged.write(('\n' + '#' * 30 + '\n\n').encode('utf8'))
-                            merged.write(f'Overall result: {result.overall_result()}\n'.encode('utf8'))
+                            merged.write(f'Overall result: {transmission_code.name}\n'.encode('utf8'))
+                            merged.write(f'\n{str_output}\n'.encode('utf8'))
 
-                child_conn.send(result)
-
-            child_conn.send(-2)
+                communicator.put(index=test_id_index,
+                                 transmission_code=transmission_code,
+                                 duration=result.time_spent)
         finally:
-            child_conn.close()
+            communicator.close()
 
     @staticmethod
     def copy_content_with_limited_buffer(

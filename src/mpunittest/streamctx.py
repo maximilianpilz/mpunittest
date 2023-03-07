@@ -22,6 +22,10 @@ import sys
 import typing
 
 
+class RedirectionContextManagerFactory(typing.Protocol):
+    def __call__(self, file: pathlib.Path) -> contextlib.AbstractContextManager[typing.TextIO]: ...
+
+
 @contextlib.contextmanager
 def redirect_stderr_to_file(file: pathlib.Path) -> typing.Generator:
     """

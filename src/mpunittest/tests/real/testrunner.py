@@ -125,35 +125,38 @@ class TestRunner(unittest.TestCase):
 
     def test_discover_and_run(self):
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = pathlib.Path(temp_dir)
+        for ipc_method in mpunittest.runner.IPCMethod:
+            with self.subTest(msg=f'test with "{ipc_method}"'):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = pathlib.Path(temp_dir)
 
-            results = mpunittest.runner.MergingRunner().discover_and_run(
-                start_dir=pathlib.Path(mpunittest.tests.dummy.dirs.__file__).parent.resolve(),
-                pattern="*test.py",
-                html_result_assets=mpunittest.runner.HtmlResultAssets(
-                    document_title=None,  # this will cause usage of the default title
-                    document_file_name=None,  # this will cause usage of the default file name
-                    result_path=temp_path
-                )
-            )
+                    results = mpunittest.runner.MergingRunner(ipc_method=ipc_method).discover_and_run(
+                        start_dir=pathlib.Path(mpunittest.tests.dummy.dirs.__file__).parent.resolve(),
+                        pattern="*test.py",
+                        html_result_assets=mpunittest.runner.HtmlResultAssets(
+                            document_title=None,  # this will cause usage of the default title
+                            document_file_name=None,  # this will cause usage of the default file name
+                            result_path=temp_path
+                        )
+                    )
 
-            result_mapping = dict()
+                    result_mapping = dict()
 
-            for result in results:
-                for test_id, individual_result in result.test_id_to_result_mapping.items():
-                    self.assertNotIn(test_id, result_mapping)
-                    result_mapping[test_id] = individual_result
+                    for test_id, simple_result, duration, _ in results:
+                        self.assertNotIn(test_id, result_mapping)
+                        result_mapping[test_id] = simple_result
 
-            self.assertEqual(5, len(set(result_mapping.keys())))
-            self.assertCountEqual([mpunittest.result.MergeableResult.Result.FAIL,
-                                   mpunittest.result.MergeableResult.Result.FAIL,
-                                   mpunittest.result.MergeableResult.Result.PASS,
-                                   mpunittest.result.MergeableResult.Result.PASS,
-                                   mpunittest.result.MergeableResult.Result.SKIPPED],
-                                  result_mapping.values())
+                    self.assertEqual(7, len(set(result_mapping.keys())))
+                    self.assertCountEqual([mpunittest.result.SimpleResult.ERROR,
+                                           mpunittest.result.SimpleResult.ERROR,
+                                           mpunittest.result.SimpleResult.PASS,
+                                           mpunittest.result.SimpleResult.PASS,
+                                           mpunittest.result.SimpleResult.SKIPPED,
+                                           mpunittest.result.SimpleResult.PASS,
+                                           mpunittest.result.SimpleResult.FAIL],
+                                          result_mapping.values())
 
-            self.assertNotIn('<!--', temp_path.joinpath('test_result.html').read_text())
+                    self.assertNotIn('<!--', temp_path.joinpath('test_result.html').read_text())
 
 
 if __name__ == '__main__':

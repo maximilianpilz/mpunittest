@@ -24,7 +24,6 @@ import mpunittest.runner
 import mpunittest.tests.dummy.dirs
 
 if __name__ == '__main__':
-
     handler = logging.StreamHandler()
 
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')

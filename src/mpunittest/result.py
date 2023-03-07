@@ -16,138 +16,161 @@ along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
 import enum
-import pathlib
-import sys
 import time
-import traceback
-import types
 import typing
 import unittest
 
+import mpunittest.comm
 
-class MergeableResult:
-    # TODO: consider adding failfast flag
-    class Result(str, enum.Enum):  # TODO: change to enum.StrEnum in CPython 3.11
-        UNKNOWN = 'unknown'
-        PASS = 'pass'
-        FAIL = 'fail'
-        SKIPPED = 'skipped'
 
-    def __init__(self, log_file_path: pathlib.Path):
-        self.test_id_to_result_mapping: typing.Dict[str, MergeableResult.Result] = dict()  # TODO: sync with startTestRun
-        self.last_error_mapping: typing.Dict[str, str] = dict()  # TODO: sync with startTestRun
-        self.skip_reason_mapping: typing.Dict[str, str] = dict()  # TODO: sync with startTestRun
-        self.time_spent_per_test_id: typing.Dict[str, int] = dict()  # TODO: sync with startTestRun
+class SimpleResult(int, enum.Enum):  # TODO: change to enum.StrEnum in CPython 3.11
+    PASS = 1
+    FAIL = 2
+    SKIPPED = 3
+    ERROR = 4
 
-        self.log_file: pathlib.Path = log_file_path
 
-    def __str__(self):
-        return 'Overall result: ' + self.overall_result()
+TransmissionCodeToSimpleResult = {
+    mpunittest.comm.TransmissionCode.PASS: SimpleResult.PASS,
+    mpunittest.comm.TransmissionCode.FAIL: SimpleResult.FAIL,
+    mpunittest.comm.TransmissionCode.SKIPPED: SimpleResult.SKIPPED,
+    mpunittest.comm.TransmissionCode.ERROR: SimpleResult.ERROR
+}
 
-    def __repr__(self):
-        return str(self.__class__.__name__) + ': ' + self.overall_result()
 
-    def printErrors(self) -> None:
-        pass
+class SubProcessResult(unittest.TestResult):
 
-    def startTest(self, test: unittest.TestCase) -> None:
-        self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.UNKNOWN
-        self.time_spent_per_test_id[test.id()] = -time.monotonic_ns()
+    @property
+    def time_spent(self):
+        assert self._time_spent
+        assert self._time_spent >= 0
 
-    def startTestRun(self) -> None:
-        self.test_id_to_result_mapping = dict()
-        self.last_error_mapping = dict()
-        self.skip_reason_mapping = dict()
-        self.time_spent_per_test_id = dict()
+        return self._time_spent
 
-    def stopTest(self, test: unittest.TestCase) -> None:
-        self.time_spent_per_test_id[test.id()] += time.monotonic_ns()
+    @property
+    def overall_result(self) -> typing.Tuple[
+        typing.Literal[
+            mpunittest.comm.TransmissionCode.PASS,
+            mpunittest.comm.TransmissionCode.FAIL,
+            mpunittest.comm.TransmissionCode.SKIPPED,
+            mpunittest.comm.TransmissionCode.ERROR], str]:
+        assert self.testsRun > 0
+        assert self._time_spent >= 0
+        assert len(self.skipped) <= self.testsRun
 
-    def stopTestRun(self) -> None:
-        pass
+        if self.wasSuccessful() and (len(self.skipped) < self.testsRun):
+            assert self.successes
+            transmission_code = mpunittest.comm.TransmissionCode.PASS
+        elif self.wasSuccessful() and (len(self.skipped) == self.testsRun):
+            assert self.skipped
+            transmission_code = mpunittest.comm.TransmissionCode.SKIPPED
+        elif self.errors:
+            assert self.errors
+            transmission_code = mpunittest.comm.TransmissionCode.ERROR
+        elif self.failures or self.unexpectedSuccesses:
+            assert self.failures
+            transmission_code = mpunittest.comm.TransmissionCode.FAIL
+        else:
+            raise NotImplementedError  # TODO: add parameter
 
-    def addError(
-            self,
-                 test: unittest.TestCase,
-                 err: typing.Tuple[typing.Type[BaseException], BaseException, types.TracebackType]
-    ) -> None:
-        exc_info_string = ''.join(traceback.format_exception(*err))
+        str_output = '\n'
 
-        self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.FAIL
-        self.last_error_mapping[test.id()] = exc_info_string
-        print(exc_info_string, file=sys.stderr, flush=True)
+        if self.errors:
+            for test, err_str in self.errors:
+                str_output += f'The test {test.id()} had an error.\n'
+                if err_str:
+                    str_output += f'Error:\n{err_str}\n'
+                str_output += '\n'
+        if self.failures:
+            for test, err_str in self.failures:
+                str_output += f'The test {test.id()} had a failure.\n'
+                if err_str:
+                    str_output += f'Failure:\n{err_str}\n'
+                str_output += '\n'
+        if self.unexpectedSuccesses:
+            for test in self.unexpectedSuccesses:
+                str_output += f'The test {test.id()} had a failure due to an unexpected success.\n\n'
+        if self.skipped:
+            for test, reason in self.skipped:
+                str_output += f'The test {test.id()} was skipped.\n'
+                str_output += f'Reason: {reason}\n\n'
+        if self.successes:
+            for test in self.successes:
+                str_output += f'The test {test.id()} was successful.\n\n'
 
-    def addFailure(
-            self,
-                   test: unittest.TestCase,
-                   err: typing.Tuple[typing.Type[BaseException], BaseException, types.TracebackType]
-    ) -> None:
-        exc_info_string = ''.join(traceback.format_exception(*err))
-
-        self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.FAIL
-        self.last_error_mapping[test.id()] = exc_info_string
-        print(exc_info_string, file=sys.stderr, flush=True)
-
-    def addSubTest(
-            self,
-                   test: unittest.TestCase,
-                   subtest: unittest.TestCase,
-                   err: typing.Tuple[typing.Type[BaseException], BaseException, types.TracebackType]
-    ) -> None:
-        # TODO: handle subtest parameter
-        if err is not None:
-            exc_info_string = ''.join(traceback.format_exception(*err))
-
-            self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.FAIL
-            self.last_error_mapping[test.id()] = exc_info_string
-            print(exc_info_string, file=sys.stderr, flush=True)
-
-    def addSuccess(
-            self,
-                   test: unittest.TestCase
-    ) -> None:
-        if self.test_id_to_result_mapping[test.id()] == MergeableResult.Result.UNKNOWN:
-            self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.PASS
-
-    def addSkip(
-            self,
-                test: unittest.TestCase,
-                reason: str
-    ) -> None:
-        self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.SKIPPED
-        self.skip_reason_mapping[test.id()] = str(reason)  # ensure that it is pickleable
-
-    def addExpectedFailure(
-            self,
-                           test: unittest.TestCase,
-                           err: typing.Tuple[typing.Type[BaseException], BaseException, types.TracebackType]
-    ) -> None:
-        pass  # TODO: implement, i.e. save what is relevant of the given information
-
-    def addUnexpectedSuccess(
-            self,
-                             test: unittest.TestCase
-    ) -> None:
-        self.test_id_to_result_mapping[test.id()] = MergeableResult.Result.FAIL
+        return transmission_code, str_output
 
     def wasSuccessful(self) -> bool:
-        # TODO: consider expected failures
-        return self.overall_result() == self.Result.PASS
+        return (super().wasSuccessful() and
+                (self.successes or
+                 self.expectedFailures or
+                 self.skipped) and
+                self.testsRun > 0)
 
-    def stop(self) -> None:
-        pass
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    def merge(self, other):
-        raise NotImplementedError
+        assert self.buffer is False
 
-    def overall_result(self) -> Result:
-        results = self.test_id_to_result_mapping.values()
+        self._time_spent: typing.Optional[int] = None
+        assert not hasattr(self, 'successes')
+        self.successes: typing.List[unittest.case.TestCase] = list()
 
-        if self.Result.FAIL in results:
-            return self.Result.FAIL
-        elif self.Result.UNKNOWN in results:
-            return self.Result.UNKNOWN
-        elif all([result == self.Result.SKIPPED for result in results]):
-            return self.Result.SKIPPED
-        else:
-            return self.Result.PASS
+    def startTestRun(self) -> None:
+        assert self.buffer is False
+
+        super().startTestRun()
+
+        assert self._time_spent is None
+        self._time_spent = -time.monotonic_ns()
+
+    def stopTestRun(self) -> None:
+        super().stopTestRun()
+
+        self._time_spent += time.monotonic_ns()
+        assert self._time_spent >= 0
+
+    def startTest(self, test: unittest.case.TestCase) -> None:
+        assert self.buffer is False
+
+        super().startTest(test)
+
+    @unittest.result.failfast
+    def addError(self, *args, **kwargs) -> None:
+        error_count = len(self.errors)
+
+        super().addError(*args, **kwargs)
+
+        assert len(self.errors) > error_count
+
+        assert self.errors[-1]
+        # print(self.errors[-1][1], file=sys.stderr, flush=True)
+
+    @unittest.result.failfast
+    def addFailure(self, *args, **kwargs) -> None:
+        failure_count = len(self.failures)
+
+        super().addFailure(*args, **kwargs)
+
+        assert len(self.failures) > failure_count
+
+        assert self.failures[-1]
+        # print(self.failures[-1][1], file=sys.stderr, flush=True)
+
+    def addSubTest(self, *args, **kwargs) -> None:
+        error_count = len(self.errors)
+        failure_count = len(self.failures)
+
+        super().addSubTest(*args, **kwargs)
+
+        assert (len(self.errors) > error_count) or (len(self.failures) > failure_count)
+
+        # if len(self.errors) > error_count:
+        #     print(self.errors[-1][1], file=sys.stderr, flush=True)
+        # else:
+        #     print(self.failures[-1][1], file=sys.stderr, flush=True)
+
+    def addSuccess(self, test: unittest.case.TestCase) -> None:
+        super().addSuccess(test)
+
+        self.successes.append(test)

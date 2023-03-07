@@ -15,9 +15,14 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 """
-import logging
 
-logger = logging.getLogger('mpunittest')
-logger.setLevel(logging.DEBUG)
+import unittest
 
-logger.addHandler(logging.NullHandler())
+
+class DummyTest(unittest.TestCase):
+
+    def test1(self):
+        self.assertIn(3, [2, 1])
+
+    def test2(self):
+        self.assertIn(1, [2, 1])
