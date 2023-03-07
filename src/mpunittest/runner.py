@@ -52,7 +52,7 @@ HtmlResultAssets = collections.namedtuple('HtmlResultAssets', ('document_title',
 
 
 class TempDirOrDummyContextManagerFactory(typing.Protocol):
-    def __call__(self) -> contextlib.AbstractContextManager[str]: ...
+    def __call__(self) -> typing.ContextManager[str]: ...
 
 
 @dataclasses.dataclass
