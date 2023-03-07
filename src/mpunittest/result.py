@@ -42,7 +42,7 @@ class SubProcessResult(unittest.TestResult):
 
     @property
     def time_spent(self):
-        assert self._time_spent
+        assert self._time_spent is not None
         assert self._time_spent >= 0
 
         return self._time_spent
