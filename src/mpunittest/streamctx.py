@@ -23,7 +23,7 @@ import typing
 
 
 class RedirectionContextManagerFactory(typing.Protocol):
-    def __call__(self, file: pathlib.Path) -> contextlib.AbstractContextManager[typing.TextIO]: ...
+    def __call__(self, file: pathlib.Path) -> typing.ContextManager[typing.TextIO]: ...
 
 
 @contextlib.contextmanager

@@ -191,7 +191,7 @@ class MergingRunner:
             top_level_dir: str = None,
             html_result_assets: HtmlResultAssets = None,
             time_unit: TimeUnit = TimeUnit.SECONDS
-    ) -> typing.List[typing.Tuple[str, mpunittest.comm.TransmissionCode, int]]:
+    ) -> typing.List[typing.Tuple[str, mpunittest.result.SimpleResult, int, pathlib.Path]]:
         """
         Discover test cases in modules matching the given pattern in the given directory.
 
@@ -330,7 +330,7 @@ class MergingRunner:
         return converted_results
 
     @staticmethod
-    def _generate_html(test_results: typing.List[typing.Tuple[str, mpunittest.comm.TransmissionCode, int]],
+    def _generate_html(test_results: typing.List[typing.Tuple[str, mpunittest.result.SimpleResult, int, pathlib.Path]],
                        result_path: pathlib.Path,
                        total_time_spent_ns: int,
                        doc_title: str,
@@ -348,14 +348,14 @@ class MergingRunner:
             template_data = template_data.replace(match, '')
 
         table_row_data = list()
-        for test_id, transmission_code, duration, log_file in test_results:
+        for test_id, simple_result, duration, log_file in test_results:
             assert log_file.is_file()
 
             table_row_data.append(
                 (test_id,
                  duration,
                  log_file.name,
-                 transmission_code)
+                 simple_result)
             )
         table_row_data = [(i, *d) for i, d in enumerate(table_row_data)]
 
